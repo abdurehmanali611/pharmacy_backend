@@ -125,7 +125,7 @@ AUTH_PASSWORD_VALIDATORS = [
 
 CORS_ALLOWED_ORIGINS = config(
     "CORS_ALLOWED_ORIGINS",
-    default="http://localhost:3000",
+    default="http://localhost:3000,https://pharmacy-pi-fawn.vercel.app",
     cast=Csv(),
 )
 
