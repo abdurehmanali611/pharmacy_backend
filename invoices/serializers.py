@@ -9,8 +9,8 @@ class InvoiceSerializer(serializers.ModelSerializer):
     supplier_id = serializers.PrimaryKeyRelatedField(
         source="supplier",
         queryset=Supplier.objects.none(),
-        allow_null=True,
-        required=False,
+        allow_null=False,
+        required=True,
         write_only=True,
     )
     selected_supplier_id = serializers.IntegerField(source="supplier.id", read_only=True)
@@ -42,3 +42,13 @@ class InvoiceSerializer(serializers.ModelSerializer):
         pharmacy_tin = getattr(getattr(request, "user", None), "profile", None)
         pharmacy_tin = getattr(pharmacy_tin, "pharmacy_tin", "")
         self.fields["supplier_id"].queryset = Supplier.objects.filter(pharmacy_tin=pharmacy_tin)
+
+    def validate(self, attrs):
+        supplier = attrs.get("supplier")
+        if supplier is None and self.instance is not None:
+            supplier = self.instance.supplier
+
+        if supplier is None:
+            raise serializers.ValidationError({"supplier_id": ["Please select a supplier."]})
+
+        return attrs
