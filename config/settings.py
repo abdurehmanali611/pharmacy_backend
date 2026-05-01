@@ -47,7 +47,10 @@ INSTALLED_APPS = [
     "rest_framework_simplejwt",
     "user",
     "medicines",
-    "purchases"
+    "purchases",
+    "suppliers",
+    "invoices",
+    "cashouts",
 ]
 
 MIDDLEWARE = [

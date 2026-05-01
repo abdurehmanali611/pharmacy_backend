@@ -8,6 +8,8 @@ from rest_framework.response import Response
 from rest_framework import status
 
 from openpyxl import load_workbook
+from suppliers.models import Supplier
+
 from .models import Medicine
 from .serializers import MedicineSerializer
 
@@ -62,6 +64,7 @@ class MedicineViewSet(viewsets.ModelViewSet):
         - price (required)
         - cost (optional)
         - quantity (required)
+        - batch_number (optional)
         - expiry_date (optional, YYYY-MM-DD or Excel date)
         - description (required)
         - supplier_name (required)
@@ -107,6 +110,7 @@ class MedicineViewSet(viewsets.ModelViewSet):
             "price": col("price"),
             "cost": col("cost"),
             "quantity": col("quantity"),
+            "batch_number": col("batch_number"),
             "expiry_date": col("expiry_date"),
             "description": col("description"),
             "supplier_name": col("supplier_name"),
@@ -132,6 +136,7 @@ class MedicineViewSet(viewsets.ModelViewSet):
                 "price": get("price"),
                 "cost": get("cost") if get("cost") is not None else 0,
                 "quantity": get("quantity"),
+                "batch_number": (str(get("batch_number")).strip() if get("batch_number") is not None else ""),
                 "expiry_date": get("expiry_date"),
                 "description": (str(get("description")).strip() if get("description") is not None else ""),
                 "supplier_name": (str(get("supplier_name")).strip() if get("supplier_name") is not None else ""),
@@ -151,7 +156,34 @@ class MedicineViewSet(viewsets.ModelViewSet):
                     pass
             payload["expiry_date"] = expiry if expiry else None
 
-            serializer = MedicineSerializer(data=payload)
+            supplier_name = payload["supplier_name"]
+            supplier = None
+            if supplier_name:
+                supplier, _ = Supplier.objects.get_or_create(
+                    pharmacy_tin=pharmacy_tin,
+                    supplier_name=supplier_name,
+                    defaults={
+                        "supplier_phone": payload["supplier_phone"],
+                        "supplier_email": payload["supplier_email"],
+                    },
+                )
+
+                supplier_changed = False
+                if payload["supplier_phone"] and supplier.supplier_phone != payload["supplier_phone"]:
+                    supplier.supplier_phone = payload["supplier_phone"]
+                    supplier_changed = True
+                if payload["supplier_email"] != supplier.supplier_email:
+                    supplier.supplier_email = payload["supplier_email"]
+                    supplier_changed = True
+                if supplier_changed:
+                    supplier.save(update_fields=["supplier_phone", "supplier_email", "updated_at"])
+
+            serializer_payload = {
+                **payload,
+                "supplier_id": supplier.id if supplier else None,
+            }
+
+            serializer = MedicineSerializer(data=serializer_payload, context={"request": request})
             if not serializer.is_valid():
                 errors.append({"row": i, "errors": serializer.errors})
                 continue
