@@ -18,7 +18,7 @@ class MedicineViewSet(viewsets.ModelViewSet):
     serializer_class = MedicineSerializer
     permission_classes = [permissions.IsAuthenticated]
     filter_backends = [SearchFilter, OrderingFilter]
-    search_fields = ["name", "category", "supplier_name", "supplier_phone", "supplier_email", "description"]
+    search_fields = ["name", "category", "supplier__supplier_name", "supplier__supplier_phone", "supplier__supplier_email", "description"]
     ordering_fields = ["created_at", "updated_at", "name", "category", "quantity", "price", "cost", "expiry_date"]
     ordering = ["-created_at"]
 
@@ -27,7 +27,7 @@ class MedicineViewSet(viewsets.ModelViewSet):
         pharmacy_tin = getattr(profile, "pharmacy_tin", "")
         if not pharmacy_tin:
             return Medicine.objects.none()
-        qs = super().get_queryset().filter(pharmacy_tin=pharmacy_tin)
+        qs = super().get_queryset().filter(pharmacy_tin=pharmacy_tin).select_related("supplier")
 
         # Optional filter by day the medicine was registered/created.
         created_date = self.request.query_params.get("created_date")
@@ -179,8 +179,15 @@ class MedicineViewSet(viewsets.ModelViewSet):
                     supplier.save(update_fields=["supplier_phone", "supplier_email", "updated_at"])
 
             serializer_payload = {
-                **payload,
                 "supplier_id": supplier.id if supplier else None,
+                "name": payload["name"],
+                "category": payload["category"],
+                "price": payload["price"],
+                "cost": payload["cost"],
+                "quantity": payload["quantity"],
+                "batch_number": payload["batch_number"],
+                "expiry_date": payload["expiry_date"],
+                "description": payload["description"],
             }
 
             serializer = MedicineSerializer(data=serializer_payload, context={"request": request})

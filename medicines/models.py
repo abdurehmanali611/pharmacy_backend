@@ -6,10 +6,10 @@ class Medicine(models.Model):
     pharmacy_tin = models.CharField(max_length=50)
     supplier = models.ForeignKey(
         Supplier,
-        null=True,
-        blank=True,
         on_delete=models.SET_NULL,
         related_name="medicines",
+        null=True,
+        blank=True,
     )
     name = models.CharField(max_length=255)
     category = models.CharField(max_length=64, blank=True, default="")
@@ -19,9 +19,6 @@ class Medicine(models.Model):
     batch_number = models.CharField(max_length=255, blank=True, default="")
     expiry_date = models.DateField(null=True, blank=True)
     description = models.TextField()
-    supplier_name = models.CharField(max_length=255)
-    supplier_phone = models.CharField(max_length=50)
-    supplier_email = models.EmailField(blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

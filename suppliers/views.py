@@ -2,6 +2,7 @@ from rest_framework import permissions, viewsets
 from rest_framework.exceptions import ValidationError
 from rest_framework.filters import OrderingFilter, SearchFilter
 
+from invoices.models import Invoice
 from medicines.models import Medicine
 
 from .models import Supplier
@@ -36,9 +37,13 @@ class SupplierViewSet(viewsets.ModelViewSet):
         pharmacy_tin = getattr(profile, "pharmacy_tin", "")
         if not pharmacy_tin:
             raise ValidationError({"detail": "Missing pharmacy TIN for the current user."})
-        supplier = serializer.save(pharmacy_tin=pharmacy_tin)
-        Medicine.objects.filter(pharmacy_tin=pharmacy_tin, supplier=supplier).update(
-            supplier_name=supplier.supplier_name,
-            supplier_phone=supplier.supplier_phone,
-            supplier_email=supplier.supplier_email,
-        )
+        serializer.save(pharmacy_tin=pharmacy_tin)
+
+    def perform_destroy(self, instance):
+        if instance.medicines.exists() or instance.invoices.exists():
+            raise ValidationError(
+                {
+                    "detail": "This supplier is still linked to medicines or invoices. Reassign those records before deleting the supplier."
+                }
+            )
+        instance.delete()

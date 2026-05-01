@@ -13,6 +13,9 @@ class MedicineSerializer(serializers.ModelSerializer):
         write_only=True,
     )
     selected_supplier_id = serializers.IntegerField(source="supplier.id", read_only=True)
+    supplier_name = serializers.SerializerMethodField()
+    supplier_phone = serializers.SerializerMethodField()
+    supplier_email = serializers.SerializerMethodField()
 
     class Meta:
         model = Medicine
@@ -60,8 +63,13 @@ class MedicineSerializer(serializers.ModelSerializer):
 
         if supplier is None:
             raise serializers.ValidationError({"supplier_id": ["Please select a supplier."]})
-
-        attrs["supplier_name"] = supplier.supplier_name
-        attrs["supplier_phone"] = supplier.supplier_phone
-        attrs["supplier_email"] = supplier.supplier_email
         return attrs
+
+    def get_supplier_name(self, obj):
+        return obj.supplier.supplier_name if obj.supplier else ""
+
+    def get_supplier_phone(self, obj):
+        return obj.supplier.supplier_phone if obj.supplier else ""
+
+    def get_supplier_email(self, obj):
+        return obj.supplier.supplier_email if obj.supplier else ""
