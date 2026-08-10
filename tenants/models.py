@@ -1,3 +1,4 @@
+from django.conf import settings
 from django.db import models
 
 
@@ -15,6 +16,7 @@ class TenantAccount(models.Model):
 
     pharmacy_tin = models.CharField(max_length=50, unique=True, db_index=True)
     pharmacy_name = models.CharField(max_length=255, blank=True, default="")
+    phone = models.CharField(max_length=32, blank=True, default="")
     logo_url = models.URLField(blank=True, default="")
     account_status = models.CharField(
         max_length=20,
@@ -24,6 +26,22 @@ class TenantAccount(models.Model):
     )
     status_reason = models.TextField(blank=True, default="")
     status_changed_at = models.DateTimeField(null=True, blank=True)
+
+    # Billing (HotCol-style, property-level)
+    setup_fee_etb = models.PositiveIntegerField(default=15000)
+    quarterly_fee_etb = models.PositiveIntegerField(default=5000)
+    payment_channel = models.CharField(max_length=64, blank=True, default="")
+    payment_transaction_ref = models.CharField(max_length=128, blank=True, default="")
+    setup_fee_approved = models.BooleanField(default=False)
+    subscription_payment_approved = models.BooleanField(default=False)
+    subscription_paid_until = models.DateTimeField(null=True, blank=True)
+    paid_quarters_count = models.PositiveIntegerField(default=0)
+    billing_hold = models.BooleanField(default=False)
+    billing_started_at = models.DateTimeField(null=True, blank=True)
+    free_trial_ends_at = models.DateTimeField(null=True, blank=True)
+    is_illustration = models.BooleanField(default=False)
+    billing_notes = models.TextField(blank=True, default="")
+
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -32,3 +50,68 @@ class TenantAccount(models.Model):
 
     def __str__(self):
         return f"{self.pharmacy_name or self.pharmacy_tin} ({self.account_status})"
+
+
+class TenantPaymentSubmission(models.Model):
+    KIND_SETUP = "setup"
+    KIND_QUARTERLY = "quarterly"
+    KIND_CHOICES = [
+        (KIND_SETUP, "Setup"),
+        (KIND_QUARTERLY, "Quarterly"),
+    ]
+
+    STATUS_PENDING = "pending"
+    STATUS_APPROVED = "approved"
+    STATUS_REJECTED = "rejected"
+    STATUS_CHOICES = [
+        (STATUS_PENDING, "Pending"),
+        (STATUS_APPROVED, "Approved"),
+        (STATUS_REJECTED, "Rejected"),
+    ]
+
+    pharmacy_tin = models.CharField(max_length=50, db_index=True)
+    payment_kind = models.CharField(max_length=20, choices=KIND_CHOICES, db_index=True)
+    amount_etb = models.PositiveIntegerField()
+    payment_channel = models.CharField(max_length=64)
+    transaction_ref = models.CharField(max_length=128)
+    status = models.CharField(
+        max_length=20,
+        choices=STATUS_CHOICES,
+        default=STATUS_PENDING,
+        db_index=True,
+    )
+    submitted_at = models.DateTimeField(auto_now_add=True)
+    submitted_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="payment_submissions",
+    )
+    approved_at = models.DateTimeField(null=True, blank=True)
+    approved_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="approved_payment_submissions",
+    )
+    rejected_at = models.DateTimeField(null=True, blank=True)
+    rejected_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="rejected_payment_submissions",
+    )
+    rejection_reason = models.TextField(blank=True, default="")
+    quarter_number = models.PositiveIntegerField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["-submitted_at"]
+        indexes = [
+            models.Index(fields=["pharmacy_tin", "payment_kind", "status"]),
+        ]
+
+    def __str__(self):
+        return f"{self.pharmacy_tin} {self.payment_kind} {self.status}"

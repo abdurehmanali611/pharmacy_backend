@@ -1,5 +1,6 @@
 from django.utils import timezone
 
+from .billing import DEFAULT_QUARTERLY_FEE_ETB, DEFAULT_SETUP_FEE_ETB
 from .models import TenantAccount
 
 
@@ -14,6 +15,10 @@ def ensure_tenant_account(*, pharmacy_tin: str, pharmacy_name: str = "", logo_ur
             "pharmacy_name": (pharmacy_name or "").strip(),
             "logo_url": (logo_url or "").strip(),
             "account_status": TenantAccount.STATUS_ACTIVE,
+            "setup_fee_etb": DEFAULT_SETUP_FEE_ETB,
+            "quarterly_fee_etb": DEFAULT_QUARTERLY_FEE_ETB,
+            "setup_fee_approved": False,
+            "subscription_payment_approved": False,
         },
     )
     if not created:

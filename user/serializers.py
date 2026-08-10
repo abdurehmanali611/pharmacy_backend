@@ -3,6 +3,7 @@ from rest_framework import serializers
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from rest_framework.exceptions import AuthenticationFailed
 
+from tenants.billing import billing_snapshot, resolve_login_access
 from tenants.models import TenantAccount
 from tenants.services import ensure_tenant_account
 
@@ -141,16 +142,23 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
         data = super().validate(attrs)
         profile = getattr(self.user, "profile", None)
         tin = getattr(profile, "pharmacy_tin", "") if profile else ""
+        role = getattr(profile, "role", "") if profile else ""
+
+        access_mode = "full"
+        payment_kind = None
+        period_status = "active"
+        billing = None
 
         if tin:
             tenant = TenantAccount.objects.filter(pharmacy_tin=tin).first()
             if tenant is None:
-                ensure_tenant_account(
+                tenant = ensure_tenant_account(
                     pharmacy_tin=tin,
                     pharmacy_name=getattr(profile, "pharmacy_name", ""),
                     logo_url=getattr(profile, "logoUrl", ""),
                 )
-            else:
+
+            if tenant is not None:
                 if tenant.account_status == TenantAccount.STATUS_SUSPENDED:
                     raise AuthenticationFailed(
                         "This pharmacy account is suspended. Contact Apex support."
@@ -164,5 +172,18 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
                         "This pharmacy account is no longer available."
                     )
 
+                decision = resolve_login_access(tenant, role=role)
+                access_mode = decision.access_mode
+                payment_kind = decision.payment_kind
+                period_status = decision.period_status
+                billing = billing_snapshot(tenant)
+
+                if decision.access_mode == "denied":
+                    raise AuthenticationFailed(decision.detail or "Access denied.")
+
         data["user"] = UserSerializer(self.user).data
+        data["access_mode"] = access_mode
+        data["payment_kind"] = payment_kind
+        data["period_status"] = period_status
+        data["billing"] = billing
         return data
