@@ -4,6 +4,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from .billing import (
+    DEFAULT_SETUP_FEE_ETB,
     PAYMENT_CHANNELS,
     billing_snapshot,
     create_payment_submission,
@@ -38,8 +39,13 @@ class SubmitTenantPaymentView(APIView):
 
         access = resolve_login_access(tenant, role=profile.role)
         payment_kind = (request.data.get("payment_kind") or access.payment_kind or "").strip().lower()
+        if not payment_kind:
+            if not tenant.setup_fee_approved:
+                payment_kind = TenantPaymentSubmission.KIND_SETUP
+            else:
+                payment_kind = TenantPaymentSubmission.KIND_QUARTERLY
+
         if access.access_mode == "full" and payment_kind == TenantPaymentSubmission.KIND_SETUP:
-            # allow setup submit only when unpaid
             if tenant.setup_fee_approved:
                 return Response(
                     {"detail": "Setup fee is already approved."},
@@ -133,4 +139,125 @@ class BillingMeView(APIView):
                     "submitted_at": pending.submitted_at,
                 },
             }
+        )
+
+
+class SignupRegistrationStatusView(APIView):
+    authentication_classes = []
+    permission_classes = [permissions.AllowAny]
+
+    def get(self, request):
+        username = (request.query_params.get("username") or "").strip()
+        if not username:
+            return Response({"detail": "username is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+        user = User.objects.filter(username__iexact=username).select_related("profile").first()
+        if not user or not hasattr(user, "profile"):
+            return Response({"status": "not_found", "detail": "Registration not found."})
+
+        tin = (user.profile.pharmacy_tin or "").strip()
+        tenant = TenantAccount.objects.filter(pharmacy_tin=tin).first()
+        if not tenant:
+            return Response({"status": "not_found", "detail": "Tenant not found."})
+
+        if tenant.setup_fee_approved or int(tenant.setup_fee_etb or 0) <= 0:
+            return Response(
+                {
+                    "status": "approved",
+                    "pharmacy_name": tenant.pharmacy_name,
+                    "pharmacy_tin": tenant.pharmacy_tin,
+                    "setup_fee_etb": tenant.setup_fee_etb,
+                }
+            )
+
+        pending = (
+            TenantPaymentSubmission.objects.filter(
+                pharmacy_tin=tin,
+                payment_kind=TenantPaymentSubmission.KIND_SETUP,
+            )
+            .order_by("-submitted_at")
+            .first()
+        )
+        if pending and pending.status == TenantPaymentSubmission.STATUS_PENDING:
+            return Response(
+                {
+                    "status": "pending",
+                    "pharmacy_name": tenant.pharmacy_name,
+                    "pharmacy_tin": tenant.pharmacy_tin,
+                    "setup_fee_etb": tenant.setup_fee_etb,
+                    "transaction_ref": pending.transaction_ref,
+                    "payment_channel": pending.payment_channel,
+                }
+            )
+        if pending and pending.status == TenantPaymentSubmission.STATUS_REJECTED:
+            return Response(
+                {
+                    "status": "rejected",
+                    "pharmacy_name": tenant.pharmacy_name,
+                    "pharmacy_tin": tenant.pharmacy_tin,
+                    "setup_fee_etb": tenant.setup_fee_etb,
+                    "rejection_reason": pending.rejection_reason,
+                }
+            )
+        return Response(
+            {
+                "status": "pending",
+                "pharmacy_name": tenant.pharmacy_name,
+                "pharmacy_tin": tenant.pharmacy_tin,
+                "setup_fee_etb": tenant.setup_fee_etb,
+            }
+        )
+
+
+class ResubmitSignupSetupPaymentView(APIView):
+    authentication_classes = []
+    permission_classes = [permissions.AllowAny]
+
+    def post(self, request):
+        username = (request.data.get("username") or "").strip()
+        password = request.data.get("password") or ""
+        channel = (request.data.get("payment_channel") or "").strip()
+        ref = (request.data.get("transaction_ref") or "").strip()
+
+        user = User.objects.filter(username__iexact=username).select_related("profile").first()
+        if not user or not user.check_password(password):
+            return Response(
+                {"detail": "Invalid username or password."},
+                status=status.HTTP_401_UNAUTHORIZED,
+            )
+        profile = getattr(user, "profile", None)
+        if not profile or (profile.role or "").lower() != "manager":
+            return Response(
+                {"detail": "Only managers can resubmit setup payment."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        tenant = TenantAccount.objects.filter(pharmacy_tin=profile.pharmacy_tin).first()
+        if not tenant:
+            return Response({"detail": "Tenant not found."}, status=status.HTTP_404_NOT_FOUND)
+        if tenant.setup_fee_approved:
+            return Response(
+                {"detail": "Setup fee is already approved."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            submission = create_payment_submission(
+                tenant=tenant,
+                payment_kind="setup",
+                payment_channel=channel,
+                transaction_ref=ref,
+                submitted_by=user,
+            )
+        except ValueError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        return Response(
+            {
+                "status": "pending",
+                "detail": "Setup payment resubmitted for Apex approval.",
+                "transaction_ref": submission.transaction_ref,
+                "setup_fee_etb": DEFAULT_SETUP_FEE_ETB,
+            },
+            status=status.HTTP_201_CREATED,
         )

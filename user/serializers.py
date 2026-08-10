@@ -3,7 +3,13 @@ from rest_framework import serializers
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from rest_framework.exceptions import AuthenticationFailed
 
-from tenants.billing import billing_snapshot, resolve_login_access
+from tenants.billing import (
+    DEFAULT_SETUP_FEE_ETB,
+    PAYMENT_CHANNELS,
+    billing_snapshot,
+    create_payment_submission,
+    resolve_login_access,
+)
 from tenants.models import TenantAccount
 from tenants.services import ensure_tenant_account
 
@@ -18,6 +24,10 @@ class UserSerializer(serializers.ModelSerializer):
     logoUrl = serializers.CharField(allow_blank=True, required=False)
     pharmacy_tin = serializers.CharField(allow_blank=True, required=False)
     password = serializers.CharField(write_only=True, required=False)
+    payment_channel = serializers.CharField(write_only=True, required=False, allow_blank=True)
+    payment_transaction_ref = serializers.CharField(
+        write_only=True, required=False, allow_blank=True
+    )
 
     class Meta:
         model = User
@@ -29,6 +39,8 @@ class UserSerializer(serializers.ModelSerializer):
             "role",
             "logoUrl",
             "pharmacy_tin",
+            "payment_channel",
+            "payment_transaction_ref",
         ]
 
     def validate_username(self, value):
@@ -43,6 +55,25 @@ class UserSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("This username is already taken.")
 
         return username
+
+    def validate(self, attrs):
+        request = self.context.get("request")
+        role = (attrs.get("role") or "").strip().lower()
+        is_self_signup = not (request and getattr(request.user, "is_authenticated", False))
+
+        if is_self_signup and role == "manager":
+            channel = (attrs.get("payment_channel") or "").strip()
+            ref = (attrs.get("payment_transaction_ref") or "").strip()
+            if DEFAULT_SETUP_FEE_ETB > 0:
+                if channel not in PAYMENT_CHANNELS:
+                    raise serializers.ValidationError(
+                        {"payment_channel": ["Select Telebirr or Commercial Bank of Ethiopia."]}
+                    )
+                if len(ref) < 4:
+                    raise serializers.ValidationError(
+                        {"payment_transaction_ref": ["Transfer ID must be at least 4 characters."]}
+                    )
+        return attrs
 
     def to_representation(self, instance):
         data = super().to_representation(instance)
@@ -60,6 +91,8 @@ class UserSerializer(serializers.ModelSerializer):
         return data
 
     def create(self, validated_data):
+        payment_channel = (validated_data.pop("payment_channel", "") or "").strip()
+        payment_transaction_ref = (validated_data.pop("payment_transaction_ref", "") or "").strip()
         profile_data = {
             "pharmacy_name": validated_data.pop("pharmacy_name", ""),
             "role": validated_data.pop("role", ""),
@@ -84,6 +117,12 @@ class UserSerializer(serializers.ModelSerializer):
                     }
                 )
 
+        if role == "manager" and pharmacy_tin:
+            if TenantAccount.objects.filter(pharmacy_tin=pharmacy_tin).exists():
+                raise serializers.ValidationError(
+                    {"pharmacy_tin": ["A pharmacy with this TIN is already registered."]}
+                )
+
         user = User(username=validated_data["username"])
         if password:
             user.set_password(password)
@@ -93,16 +132,29 @@ class UserSerializer(serializers.ModelSerializer):
 
         UserProfile.objects.create(user=user, **profile_data)
 
+        request = self.context.get("request")
+        is_self_signup = not (request and getattr(request.user, "is_authenticated", False))
+
         if pharmacy_tin and role == "manager":
-            ensure_tenant_account(
+            tenant = ensure_tenant_account(
                 pharmacy_tin=pharmacy_tin,
                 pharmacy_name=profile_data.get("pharmacy_name", ""),
                 logo_url=profile_data.get("logoUrl", ""),
             )
+            if tenant and is_self_signup and payment_channel and payment_transaction_ref:
+                create_payment_submission(
+                    tenant=tenant,
+                    payment_kind="setup",
+                    payment_channel=payment_channel,
+                    transaction_ref=payment_transaction_ref,
+                    submitted_by=user,
+                )
 
         return user
 
     def update(self, instance, validated_data):
+        validated_data.pop("payment_channel", None)
+        validated_data.pop("payment_transaction_ref", None)
         profile_data = {
             "pharmacy_name": validated_data.pop("pharmacy_name", None),
             "role": validated_data.pop("role", None),
