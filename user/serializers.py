@@ -1,5 +1,10 @@
 from django.contrib.auth import get_user_model
 from rest_framework import serializers
+from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
+from rest_framework.exceptions import AuthenticationFailed
+
+from tenants.models import TenantAccount
+from tenants.services import ensure_tenant_account
 
 from .models import UserProfile
 
@@ -86,6 +91,14 @@ class UserSerializer(serializers.ModelSerializer):
         user.save()
 
         UserProfile.objects.create(user=user, **profile_data)
+
+        if pharmacy_tin and role == "manager":
+            ensure_tenant_account(
+                pharmacy_tin=pharmacy_tin,
+                pharmacy_name=profile_data.get("pharmacy_name", ""),
+                logo_url=profile_data.get("logoUrl", ""),
+            )
+
         return user
 
     def update(self, instance, validated_data):
@@ -107,9 +120,49 @@ class UserSerializer(serializers.ModelSerializer):
             if value is not None:
                 setattr(profile, attr, value)
         profile.save()
+
+        if profile.pharmacy_tin and (profile.role or "").strip().lower() == "manager":
+            ensure_tenant_account(
+                pharmacy_tin=profile.pharmacy_tin,
+                pharmacy_name=profile.pharmacy_name,
+                logo_url=profile.logoUrl,
+            )
+
         return instance
 
 
 class ChangePasswordSerializer(serializers.Serializer):
     old_password = serializers.CharField(write_only=True)
     new_password = serializers.CharField(write_only=True)
+
+
+class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
+    def validate(self, attrs):
+        data = super().validate(attrs)
+        profile = getattr(self.user, "profile", None)
+        tin = getattr(profile, "pharmacy_tin", "") if profile else ""
+
+        if tin:
+            tenant = TenantAccount.objects.filter(pharmacy_tin=tin).first()
+            if tenant is None:
+                ensure_tenant_account(
+                    pharmacy_tin=tin,
+                    pharmacy_name=getattr(profile, "pharmacy_name", ""),
+                    logo_url=getattr(profile, "logoUrl", ""),
+                )
+            else:
+                if tenant.account_status == TenantAccount.STATUS_SUSPENDED:
+                    raise AuthenticationFailed(
+                        "This pharmacy account is suspended. Contact Apex support."
+                    )
+                if tenant.account_status == TenantAccount.STATUS_BANNED:
+                    raise AuthenticationFailed(
+                        "This pharmacy account is banned. Contact Apex support."
+                    )
+                if tenant.account_status == TenantAccount.STATUS_DELETED:
+                    raise AuthenticationFailed(
+                        "This pharmacy account is no longer available."
+                    )
+
+        data["user"] = UserSerializer(self.user).data
+        return data

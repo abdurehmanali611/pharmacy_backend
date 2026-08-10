@@ -51,6 +51,7 @@ INSTALLED_APPS = [
     "suppliers",
     "invoices",
     "cashouts",
+    "tenants",
 ]
 
 MIDDLEWARE = [
