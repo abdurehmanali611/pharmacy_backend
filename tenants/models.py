@@ -30,6 +30,7 @@ class TenantAccount(models.Model):
     # Billing (HotCol-style, property-level)
     setup_fee_etb = models.PositiveIntegerField(default=15000)
     quarterly_fee_etb = models.PositiveIntegerField(default=5000)
+    yearly_fee_etb = models.PositiveIntegerField(default=18000)
     payment_channel = models.CharField(max_length=64, blank=True, default="")
     payment_transaction_ref = models.CharField(max_length=128, blank=True, default="")
     setup_fee_approved = models.BooleanField(default=False)
@@ -41,6 +42,8 @@ class TenantAccount(models.Model):
     free_trial_ends_at = models.DateTimeField(null=True, blank=True)
     is_illustration = models.BooleanField(default=False)
     billing_notes = models.TextField(blank=True, default="")
+    modules = models.JSONField(default=list, blank=True)
+    fees_manually_set = models.BooleanField(default=False)
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -55,9 +58,11 @@ class TenantAccount(models.Model):
 class TenantPaymentSubmission(models.Model):
     KIND_SETUP = "setup"
     KIND_QUARTERLY = "quarterly"
+    KIND_YEARLY = "yearly"
     KIND_CHOICES = [
         (KIND_SETUP, "Setup"),
         (KIND_QUARTERLY, "Quarterly"),
+        (KIND_YEARLY, "Yearly"),
     ]
 
     STATUS_PENDING = "pending"
@@ -115,3 +120,70 @@ class TenantPaymentSubmission(models.Model):
 
     def __str__(self):
         return f"{self.pharmacy_tin} {self.payment_kind} {self.status}"
+
+
+class TenantModuleChangeRequest(models.Model):
+    """Shared with pharmacy-admin (Apex queue)."""
+
+    STATUS_PENDING = "pending"
+    STATUS_APPROVED = "approved"
+    STATUS_REJECTED = "rejected"
+    STATUS_CANCELLED = "cancelled"
+
+    pharmacy_tin = models.CharField(max_length=50, db_index=True)
+    requested_modules = models.JSONField(default=list)
+    request_note = models.TextField(blank=True, default="")
+    status = models.CharField(max_length=20, default=STATUS_PENDING, db_index=True)
+    requested_by_side = models.CharField(max_length=20, default="tenant")
+    requested_by_username = models.CharField(max_length=150, blank=True, default="")
+    review_note = models.TextField(blank=True, default="")
+    reviewed_at = models.DateTimeField(null=True, blank=True)
+    setup_fee_snapshot = models.PositiveIntegerField(null=True, blank=True)
+    quarterly_fee_snapshot = models.PositiveIntegerField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        managed = False
+        db_table = "tenants_tenantmodulechangerequest"
+        ordering = ["-created_at"]
+
+
+class TenantFeedbackThread(models.Model):
+    STATUS_OPEN = "open"
+    STATUS_CLOSED = "closed"
+
+    pharmacy_tin = models.CharField(max_length=50, unique=True, db_index=True)
+    status = models.CharField(max_length=20, default=STATUS_OPEN, db_index=True)
+    closed_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        managed = False
+        db_table = "tenants_tenantfeedbackthread"
+        ordering = ["-updated_at"]
+
+
+class TenantFeedbackMessage(models.Model):
+    SIDE_TENANT = "tenant"
+    SIDE_APEX = "apex"
+
+    thread = models.ForeignKey(
+        TenantFeedbackThread,
+        on_delete=models.CASCADE,
+        related_name="messages",
+        db_constraint=False,
+    )
+    sender_side = models.CharField(max_length=20)
+    body = models.TextField()
+    image_url = models.URLField(blank=True, default="")
+    sender_username = models.CharField(max_length=150, blank=True, default="")
+    read_by_tenant = models.BooleanField(default=False)
+    read_by_apex = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        managed = False
+        db_table = "tenants_tenantfeedbackmessage"
+        ordering = ["created_at"]
