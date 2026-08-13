@@ -9,6 +9,7 @@ from .models import TenantAccount, TenantPaymentSubmission
 
 PERIOD_DAYS = 90
 WARNING_DAYS = 10
+TRIAL_ENDING_DAYS = 5  # HotCol-aligned soft window before trial final day
 GRACE_DAYS = 10
 
 DEFAULT_SETUP_FEE_ETB = 15000
@@ -75,12 +76,13 @@ def compute_period_status(tenant: TenantAccount, *, now=None) -> str:
         has_ref = len((tenant.payment_transaction_ref or "").strip()) >= 4
         if has_pending or has_ref:
             return "setup_pending"
-        if tenant.free_trial_ends_at and now < tenant.free_trial_ends_at:
-            remaining = tenant.free_trial_ends_at - now
-            if remaining <= timedelta(days=WARNING_DAYS):
-                return "trial_ending"
-            return "trial"
-        if tenant.free_trial_ends_at and now >= tenant.free_trial_ends_at:
+        if tenant.free_trial_ends_at:
+            # Soft window until the day before the trial ends; final day+ blocks login.
+            if now.date() < tenant.free_trial_ends_at.date():
+                remaining = tenant.free_trial_ends_at - now
+                if remaining <= timedelta(days=TRIAL_ENDING_DAYS):
+                    return "trial_ending"
+                return "trial"
             return "trial_expired"
         # No trial and unpaid setup without submission yet → treat as portal setup
         return "trial_expired"
@@ -93,12 +95,16 @@ def compute_period_status(tenant: TenantAccount, *, now=None) -> str:
     if not paid_until:
         return "expired"
 
-    if now <= paid_until:
+    # Soft access while days remain after today; final calendar day and after → hard gate.
+    if now.date() < paid_until.date():
         if paid_until - now <= timedelta(days=WARNING_DAYS):
             return "warning"
         return "active"
 
     overdue = now - paid_until
+    # Final day counts as day 0 of the grace/overdue window.
+    if overdue.total_seconds() < 0:
+        overdue = timedelta(0)
     if overdue <= timedelta(days=GRACE_DAYS):
         return "grace"
     return "expired"
@@ -109,7 +115,15 @@ def resolve_login_access(tenant: TenantAccount, *, role: str) -> AccessDecision:
     is_manager = role_l == "manager"
     period = compute_period_status(tenant)
 
-    if period in {"exempt", "on_hold", "trial", "trial_ending", "active", "warning"}:
+    if period == "on_hold":
+        return AccessDecision(
+            "denied",
+            None,
+            period,
+            "This pharmacy is on billing hold. Login is disabled until Apex releases the hold.",
+        )
+
+    if period in {"exempt", "trial", "trial_ending", "active", "warning"}:
         return AccessDecision("full", None, period)
 
     if period == "setup_pending":
