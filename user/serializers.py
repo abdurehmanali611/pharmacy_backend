@@ -4,9 +4,9 @@ from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from rest_framework.exceptions import AuthenticationFailed
 
 from tenants.billing import (
-    DEFAULT_SETUP_FEE_ETB,
     PAYMENT_CHANNELS,
     billing_snapshot,
+    catalog_default_fees,
     create_payment_submission,
     resolve_login_access,
 )
@@ -64,7 +64,8 @@ class UserSerializer(serializers.ModelSerializer):
         if is_self_signup and role == "manager":
             channel = (attrs.get("payment_channel") or "").strip()
             ref = (attrs.get("payment_transaction_ref") or "").strip()
-            if DEFAULT_SETUP_FEE_ETB > 0:
+            setup_fee = int(catalog_default_fees().get("setup_fee_etb") or 0)
+            if setup_fee > 0:
                 if channel not in PAYMENT_CHANNELS:
                     raise serializers.ValidationError(
                         {"payment_channel": ["Select Telebirr or Commercial Bank of Ethiopia."]}

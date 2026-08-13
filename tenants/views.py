@@ -4,15 +4,35 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from .billing import (
-    DEFAULT_SETUP_FEE_ETB,
     PAYMENT_CHANNELS,
     billing_snapshot,
+    catalog_default_fees,
     create_payment_submission,
     resolve_login_access,
 )
 from .models import TenantAccount, TenantPaymentSubmission
 
 User = get_user_model()
+
+
+class PublicPricingView(APIView):
+    """Public catalog fees used by the pharmacy Register page."""
+
+    authentication_classes = []
+    permission_classes = [permissions.AllowAny]
+
+    def get(self, request):
+        fees = catalog_default_fees()
+        return Response(
+            {
+                "business_type": "Pharmacy",
+                "setup_fee_etb": fees["setup_fee_etb"],
+                "quarterly_fee_etb": fees["quarterly_fee_etb"],
+                "yearly_fee_etb": fees.get("yearly_fee_etb") or 0,
+                "source": fees.get("source") or "fallback",
+                "description": fees.get("description") or "",
+            }
+        )
 
 
 class SubmitTenantPaymentView(APIView):
@@ -257,7 +277,7 @@ class ResubmitSignupSetupPaymentView(APIView):
                 "status": "pending",
                 "detail": "Setup payment resubmitted for Apex approval.",
                 "transaction_ref": submission.transaction_ref,
-                "setup_fee_etb": DEFAULT_SETUP_FEE_ETB,
+                "setup_fee_etb": tenant.setup_fee_etb,
             },
             status=status.HTTP_201_CREATED,
         )

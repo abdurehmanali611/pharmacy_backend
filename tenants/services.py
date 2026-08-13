@@ -1,6 +1,6 @@
 from django.utils import timezone
 
-from .billing import DEFAULT_QUARTERLY_FEE_ETB, DEFAULT_SETUP_FEE_ETB
+from .billing import catalog_default_fees
 from .models import TenantAccount
 
 
@@ -9,14 +9,16 @@ def ensure_tenant_account(*, pharmacy_tin: str, pharmacy_name: str = "", logo_ur
     if not tin:
         return None
 
+    fees = catalog_default_fees()
     tenant, created = TenantAccount.objects.get_or_create(
         pharmacy_tin=tin,
         defaults={
             "pharmacy_name": (pharmacy_name or "").strip(),
             "logo_url": (logo_url or "").strip(),
             "account_status": TenantAccount.STATUS_ACTIVE,
-            "setup_fee_etb": DEFAULT_SETUP_FEE_ETB,
-            "quarterly_fee_etb": DEFAULT_QUARTERLY_FEE_ETB,
+            "setup_fee_etb": fees["setup_fee_etb"],
+            "quarterly_fee_etb": fees["quarterly_fee_etb"],
+            "yearly_fee_etb": fees.get("yearly_fee_etb") or 0,
             "setup_fee_approved": False,
             "subscription_payment_approved": False,
         },
@@ -31,8 +33,17 @@ def ensure_tenant_account(*, pharmacy_tin: str, pharmacy_name: str = "", logo_ur
         if logo and tenant.logo_url != logo:
             tenant.logo_url = logo
             dirty = True
+        # Keep unconfigured new tenants aligned with the live catalog
+        # until Apex manually overrides fees on the tenant.
+        if not tenant.fees_manually_set and not tenant.setup_fee_approved:
+            if tenant.setup_fee_etb != fees["setup_fee_etb"]:
+                tenant.setup_fee_etb = fees["setup_fee_etb"]
+                dirty = True
+            if tenant.quarterly_fee_etb != fees["quarterly_fee_etb"]:
+                tenant.quarterly_fee_etb = fees["quarterly_fee_etb"]
+                dirty = True
         if dirty:
-            tenant.save(update_fields=["pharmacy_name", "logo_url", "updated_at"])
+            tenant.save()
     return tenant
 
 

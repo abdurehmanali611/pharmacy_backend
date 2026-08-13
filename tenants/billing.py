@@ -14,6 +14,29 @@ GRACE_DAYS = 10
 DEFAULT_SETUP_FEE_ETB = 15000
 DEFAULT_QUARTERLY_FEE_ETB = 5000
 
+
+def catalog_default_fees() -> dict:
+    """Active Pharmacy base catalog fees from Apex pricing rules (shared DB)."""
+    try:
+        from .pricing import resolve_pricing
+
+        fees = resolve_pricing("Pharmacy", [])
+        return {
+            "setup_fee_etb": int(fees.get("setup_fee_etb") or DEFAULT_SETUP_FEE_ETB),
+            "quarterly_fee_etb": int(fees.get("quarterly_fee_etb") or DEFAULT_QUARTERLY_FEE_ETB),
+            "yearly_fee_etb": int(fees.get("yearly_fee_etb") or 0),
+            "source": fees.get("source") or "fallback",
+            "description": fees.get("description") or "",
+        }
+    except Exception:
+        return {
+            "setup_fee_etb": DEFAULT_SETUP_FEE_ETB,
+            "quarterly_fee_etb": DEFAULT_QUARTERLY_FEE_ETB,
+            "yearly_fee_etb": 0,
+            "source": "fallback",
+            "description": "",
+        }
+
 PAYMENT_CHANNELS = (
     "Telebirr",
     "Commercial Bank of Ethiopia",
