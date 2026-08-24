@@ -28,6 +28,7 @@ class UserSerializer(serializers.ModelSerializer):
     payment_transaction_ref = serializers.CharField(
         write_only=True, required=False, allow_blank=True
     )
+    sales_agent_id = serializers.IntegerField(write_only=True, required=False, allow_null=True)
 
     class Meta:
         model = User
@@ -41,6 +42,7 @@ class UserSerializer(serializers.ModelSerializer):
             "pharmacy_tin",
             "payment_channel",
             "payment_transaction_ref",
+            "sales_agent_id",
         ]
 
     def validate_username(self, value):
@@ -94,6 +96,7 @@ class UserSerializer(serializers.ModelSerializer):
     def create(self, validated_data):
         payment_channel = (validated_data.pop("payment_channel", "") or "").strip()
         payment_transaction_ref = (validated_data.pop("payment_transaction_ref", "") or "").strip()
+        sales_agent_id = validated_data.pop("sales_agent_id", None)
         profile_data = {
             "pharmacy_name": validated_data.pop("pharmacy_name", ""),
             "role": validated_data.pop("role", ""),
@@ -137,10 +140,14 @@ class UserSerializer(serializers.ModelSerializer):
         is_self_signup = not (request and getattr(request.user, "is_authenticated", False))
 
         if pharmacy_tin and role == "manager":
+            from tenants.sales_agents import resolve_sales_agent
+
+            agent = resolve_sales_agent(sales_agent_id) if is_self_signup else None
             tenant = ensure_tenant_account(
                 pharmacy_tin=pharmacy_tin,
                 pharmacy_name=profile_data.get("pharmacy_name", ""),
                 logo_url=profile_data.get("logoUrl", ""),
+                sales_agent=agent,
             )
             if tenant and is_self_signup and payment_channel and payment_transaction_ref:
                 create_payment_submission(
@@ -156,6 +163,7 @@ class UserSerializer(serializers.ModelSerializer):
     def update(self, instance, validated_data):
         validated_data.pop("payment_channel", None)
         validated_data.pop("payment_transaction_ref", None)
+        validated_data.pop("sales_agent_id", None)
         profile_data = {
             "pharmacy_name": validated_data.pop("pharmacy_name", None),
             "role": validated_data.pop("role", None),

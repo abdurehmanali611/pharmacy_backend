@@ -4,7 +4,13 @@ from .billing import catalog_default_fees
 from .models import TenantAccount
 
 
-def ensure_tenant_account(*, pharmacy_tin: str, pharmacy_name: str = "", logo_url: str = "") -> TenantAccount | None:
+def ensure_tenant_account(
+    *,
+    pharmacy_tin: str,
+    pharmacy_name: str = "",
+    logo_url: str = "",
+    sales_agent=None,
+) -> TenantAccount | None:
     tin = (pharmacy_tin or "").strip()
     if not tin:
         return None
@@ -19,6 +25,7 @@ def ensure_tenant_account(*, pharmacy_tin: str, pharmacy_name: str = "", logo_ur
             "setup_fee_etb": fees["setup_fee_etb"],
             "quarterly_fee_etb": fees["quarterly_fee_etb"],
             "yearly_fee_etb": fees.get("yearly_fee_etb") or 0,
+            "sales_agent": sales_agent,
             "setup_fee_approved": False,
             "subscription_payment_approved": False,
         },
