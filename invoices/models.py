@@ -16,6 +16,7 @@ class Invoice(models.Model):
         ("Cash", "Cash"),
         ("Bank", "Bank"),
         ("Credit", "Credit"),
+        ("Telebirr", "Telebirr"),
     ]
 
     pharmacy_tin = models.CharField(max_length=50)
@@ -47,4 +48,3 @@ class Invoice(models.Model):
 
     def __str__(self):
         return f"{self.invoice_number} ({self.pharmacy_tin})"
-

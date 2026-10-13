@@ -32,6 +32,7 @@ class MedicineSerializer(serializers.ModelSerializer):
             "batch_number",
             "expiry_date",
             "description",
+            "image_url",
             "supplier_name",
             "supplier_phone",
             "supplier_email",

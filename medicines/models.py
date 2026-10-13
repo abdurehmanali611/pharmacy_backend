@@ -19,6 +19,7 @@ class Medicine(models.Model):
     batch_number = models.CharField(max_length=255, blank=True, default="")
     expiry_date = models.DateField(null=True, blank=True)
     description = models.TextField()
+    image_url = models.URLField(blank=True, null=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
