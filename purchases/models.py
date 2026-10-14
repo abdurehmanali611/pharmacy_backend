@@ -1,7 +1,16 @@
 from django.db import models
 
+from medicines.models import Medicine
+
 class Purchase(models.Model):
     pharmacy_tin = models.CharField(max_length=50)
+    medicine = models.ForeignKey(
+        Medicine,
+        on_delete=models.SET_NULL,
+        related_name="sales",
+        null=True,
+        blank=True,
+    )
     medicine_name = models.CharField(max_length=255)
     quantity = models.PositiveIntegerField()
     price = models.DecimalField(max_digits=10, decimal_places=2)
