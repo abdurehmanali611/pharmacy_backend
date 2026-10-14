@@ -1,7 +1,8 @@
+from decimal import Decimal
+
 from django.db import transaction
 from django.db.models import Case, F, IntegerField, Value, When
 from django.utils import timezone
-from decimal import Decimal
 from rest_framework import permissions, serializers, viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import ValidationError
@@ -171,6 +172,7 @@ class PurchaseViewSet(viewsets.ModelViewSet):
 
         aggregated_quantities = {}
         medicine_map = {}
+        medicine_ids_for_items = []
 
         for item in items:
             medicine_name = item["medicine_name"]
@@ -185,28 +187,36 @@ class PurchaseViewSet(viewsets.ModelViewSet):
 
             aggregated_quantities[medicine.pk] = aggregated_quantities.get(medicine.pk, 0) + item["quantity"]
             medicine_map[medicine.pk] = medicine
-
-        for medicine_id, total_quantity in aggregated_quantities.items():
-            medicine = medicine_map[medicine_id]
-            if medicine.quantity < total_quantity:
-                raise ValidationError(
-                    {
-                        "items": [
-                            f"{medicine.name}: Insufficient stock. Available: {medicine.quantity}, requested: {total_quantity}."
-                        ]
-                    }
-                )
+            medicine_ids_for_items.append(medicine.pk)
 
         created_purchases = []
 
         with transaction.atomic():
-            for item in items:
-                medicine_name = item["medicine_name"]
-                medicine = self._get_medicine_for_pharmacy(
-                    medicine_name,
-                    pharmacy_tin,
-                    item.get("medicine_id"),
+            locked_medicines = {
+                medicine.pk: medicine
+                for medicine in Medicine.objects.select_for_update().filter(
+                    pharmacy_tin=pharmacy_tin,
+                    pk__in=medicine_map,
                 )
+            }
+            if len(locked_medicines) != len(medicine_map):
+                raise ValidationError({"items": ["A selected medicine batch is no longer available."]})
+
+            for medicine_id, total_quantity in aggregated_quantities.items():
+                medicine = locked_medicines[medicine_id]
+                self._validate_not_expired(medicine)
+                if medicine.quantity < total_quantity:
+                    raise ValidationError(
+                        {
+                            "items": [
+                                f"{medicine.name}: Insufficient stock. Available: {medicine.quantity}, requested: {total_quantity}."
+                            ]
+                        }
+                    )
+
+            for item, medicine_id in zip(items, medicine_ids_for_items):
+                medicine = locked_medicines[medicine_id]
+                medicine_name = item["medicine_name"]
                 quantity = item["quantity"]
                 price = item["price"]
 
