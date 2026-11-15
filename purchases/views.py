@@ -11,6 +11,11 @@ from rest_framework import status
 from .models import Purchase
 from .serializers import PurchaseSerializer
 from medicines.models import Medicine
+from sales_approvals.serializers import PendingSaleSerializer
+from sales_approvals.services import (
+    cart_requires_approval,
+    create_pending_sale,
+)
 
 
 class BulkPurchaseItemSerializer(serializers.Serializer):
@@ -173,6 +178,7 @@ class PurchaseViewSet(viewsets.ModelViewSet):
         aggregated_quantities = {}
         medicine_map = {}
         medicine_ids_for_items = []
+        resolved_items = []
 
         for item in items:
             medicine_name = item["medicine_name"]
@@ -188,6 +194,25 @@ class PurchaseViewSet(viewsets.ModelViewSet):
             aggregated_quantities[medicine.pk] = aggregated_quantities.get(medicine.pk, 0) + item["quantity"]
             medicine_map[medicine.pk] = medicine
             medicine_ids_for_items.append(medicine.pk)
+            resolved_items.append(
+                {
+                    "medicine": medicine,
+                    "medicine_name": medicine_name,
+                    "quantity": item["quantity"],
+                    "price": item["price"],
+                }
+            )
+
+        if cart_requires_approval(pharmacy_tin, resolved_items):
+            pending = create_pending_sale(request.user, pharmacy_tin, resolved_items)
+            return Response(
+                {
+                    "detail": "Sale held for manager approval. Inventory was not changed.",
+                    "pending": True,
+                    "pending_sale": PendingSaleSerializer(pending).data,
+                },
+                status=status.HTTP_202_ACCEPTED,
+            )
 
         created_purchases = []
 
