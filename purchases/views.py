@@ -15,6 +15,7 @@ from sales_approvals.serializers import PendingSaleSerializer
 from sales_approvals.services import (
     cart_requires_approval,
     create_pending_sale,
+    find_auto_rejected_items,
 )
 
 
@@ -202,6 +203,10 @@ class PurchaseViewSet(viewsets.ModelViewSet):
                     "price": item["price"],
                 }
             )
+
+        auto_reject_messages = find_auto_rejected_items(pharmacy_tin, resolved_items)
+        if auto_reject_messages:
+            raise ValidationError({"items": auto_reject_messages})
 
         if cart_requires_approval(pharmacy_tin, resolved_items):
             pending = create_pending_sale(request.user, pharmacy_tin, resolved_items)

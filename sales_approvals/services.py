@@ -49,19 +49,48 @@ def quantity_in_band(quantity, threshold, final):
     return True
 
 
+def get_quantity_rule(pharmacy_tin, medicine):
+    return QuantitySaleRule.objects.filter(
+        pharmacy_tin=pharmacy_tin, medicine=medicine
+    ).first()
+
+
+def quantity_exceeds_final(quantity, rule):
+    """Rule 1 with a final cap: qty above final is auto-rejected."""
+    return bool(rule and rule.final is not None and quantity > rule.final)
+
+
 def evaluate_item_trigger(pharmacy_tin, medicine, quantity):
     if ApprovalRequiredMedicine.objects.filter(
         pharmacy_tin=pharmacy_tin, medicine=medicine
     ).exists():
         return PendingSaleLine.TRIGGER_NEEDS_APPROVAL
 
-    rule = QuantitySaleRule.objects.filter(
-        pharmacy_tin=pharmacy_tin, medicine=medicine
-    ).first()
+    rule = get_quantity_rule(pharmacy_tin, medicine)
+    if rule and quantity_exceeds_final(quantity, rule):
+        return PendingSaleLine.TRIGGER_NONE
     if rule and quantity_in_band(quantity, rule.threshold, rule.final):
         return PendingSaleLine.TRIGGER_QUANTITY_BAND
 
     return PendingSaleLine.TRIGGER_NONE
+
+
+def find_auto_rejected_items(pharmacy_tin, resolved_items):
+    """
+    Rule 1 items requested above final are auto-rejected.
+    Returns list of human-readable rejection messages.
+    """
+    messages = []
+    for item in resolved_items:
+        medicine = item["medicine"]
+        quantity = item["quantity"]
+        rule = get_quantity_rule(pharmacy_tin, medicine)
+        if quantity_exceeds_final(quantity, rule):
+            messages.append(
+                f"{item['medicine_name']}: quantity {quantity} exceeds the allowed "
+                f"maximum of {rule.final}. Sale auto-rejected."
+            )
+    return messages
 
 
 def cart_requires_approval(pharmacy_tin, resolved_items):

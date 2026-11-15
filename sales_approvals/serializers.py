@@ -164,7 +164,7 @@ class ManagerAttachmentSerializer(serializers.Serializer):
     parent_line_id = serializers.IntegerField()
     medicine_id = serializers.IntegerField(required=False, allow_null=True)
     medicine_name = serializers.CharField(max_length=255)
-    qty_threshold = serializers.IntegerField(min_value=1)
+    qty_threshold = serializers.IntegerField(min_value=1, required=False, allow_null=True)
     qty_final = serializers.IntegerField(min_value=1, required=False, allow_null=True)
     manager_unit_price = serializers.DecimalField(
         max_digits=10, decimal_places=2, required=False, allow_null=True

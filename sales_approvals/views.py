@@ -26,6 +26,7 @@ from .serializers import (
 from .services import (
     ensure_mutual_exclusion,
     get_pharmacy_tin,
+    get_quantity_rule,
     quantity_in_band,
     settle_pending_sale,
 )
@@ -284,12 +285,6 @@ class PendingSaleViewSet(viewsets.ReadOnlyModelViewSet):
                             ]
                         }
                     )
-                threshold = attachment["qty_threshold"]
-                final = attachment.get("qty_final")
-                if final is not None and final < threshold:
-                    raise ValidationError(
-                        {"attachments": [f"{attachment['medicine_name']}: final < threshold."]}
-                    )
 
                 medicine = None
                 medicine_id = attachment.get("medicine_id")
@@ -297,6 +292,31 @@ class PendingSaleViewSet(viewsets.ReadOnlyModelViewSet):
                     medicine = Medicine.objects.filter(
                         pharmacy_tin=tin, pk=medicine_id
                     ).first()
+
+                # Rule 1 attachments: band comes from the quantity rule; only unit price is editable.
+                rule = get_quantity_rule(tin, medicine) if medicine else None
+                if rule:
+                    threshold = rule.threshold
+                    final = rule.final
+                else:
+                    threshold = attachment.get("qty_threshold")
+                    final = attachment.get("qty_final")
+                    if threshold is None:
+                        raise ValidationError(
+                            {
+                                "attachments": [
+                                    f"{attachment['medicine_name']}: quantity threshold is required."
+                                ]
+                            }
+                        )
+                    if final is not None and final < threshold:
+                        raise ValidationError(
+                            {
+                                "attachments": [
+                                    f"{attachment['medicine_name']}: final < threshold."
+                                ]
+                            }
+                        )
 
                 original_price = attachment.get("original_price")
                 if original_price is None:
