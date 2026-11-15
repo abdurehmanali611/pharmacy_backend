@@ -102,7 +102,11 @@ class QuantitySaleRuleViewSet(viewsets.ModelViewSet):
                 threshold = item["threshold"]
                 if final is not None and final < threshold:
                     raise ValidationError(
-                        {"items": [f"{medicines[item['medicine_id']].name}: final < threshold."]}
+                        {
+                            "items": [
+                                f"{medicines[item['medicine_id']].name}: final must be ≥ threshold."
+                            ]
+                        }
                     )
                 created.append(
                     QuantitySaleRule.objects.create(
@@ -255,13 +259,25 @@ class PendingSaleViewSet(viewsets.ReadOnlyModelViewSet):
                         final = line.original_quantity
                     if final is not None and final < threshold:
                         raise ValidationError(
-                            {"line_updates": [f"{line.medicine_name}: final < threshold."]}
+                            {
+                                "line_updates": [
+                                    f"{line.medicine_name}: final must be ≥ threshold."
+                                ]
+                            }
                         )
                     line.qty_threshold = threshold
                     line.qty_final = final
-                elif "qty_threshold" in update:
-                    line.qty_threshold = update.get("qty_threshold")
-                    line.qty_final = update.get("qty_final")
+                elif "qty_threshold" in update or "qty_final" in update:
+                    threshold = update.get("qty_threshold", line.qty_threshold)
+                    final = update.get("qty_final", line.qty_final)
+                    if threshold is not None and final is not None and final < threshold:
+                        raise ValidationError(
+                            {"line_updates": [f"{line.medicine_name}: final must be ≥ threshold."]}
+                        )
+                    if "qty_threshold" in update:
+                        line.qty_threshold = threshold
+                    if "qty_final" in update:
+                        line.qty_final = final
 
                 line.save()
 
@@ -313,7 +329,7 @@ class PendingSaleViewSet(viewsets.ReadOnlyModelViewSet):
                         raise ValidationError(
                             {
                                 "attachments": [
-                                    f"{attachment['medicine_name']}: final < threshold."
+                                    f"{attachment['medicine_name']}: final must be ≥ threshold."
                                 ]
                             }
                         )

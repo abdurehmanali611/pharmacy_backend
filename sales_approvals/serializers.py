@@ -45,6 +45,15 @@ class BulkQuantitySaleRuleItemSerializer(serializers.Serializer):
     threshold = serializers.IntegerField(min_value=1)
     final = serializers.IntegerField(min_value=1, required=False, allow_null=True)
 
+    def validate(self, attrs):
+        threshold = attrs.get("threshold")
+        final = attrs.get("final")
+        if final is not None and threshold is not None and final < threshold:
+            raise serializers.ValidationError(
+                {"final": "Final must be greater than or equal to threshold."}
+            )
+        return attrs
+
 
 class BulkQuantitySaleRuleSerializer(serializers.Serializer):
     items = BulkQuantitySaleRuleItemSerializer(many=True)
@@ -159,6 +168,15 @@ class ManagerLineUpdateSerializer(serializers.Serializer):
     qty_threshold = serializers.IntegerField(min_value=1, required=False, allow_null=True)
     qty_final = serializers.IntegerField(min_value=1, required=False, allow_null=True)
 
+    def validate(self, attrs):
+        threshold = attrs.get("qty_threshold")
+        final = attrs.get("qty_final")
+        if final is not None and threshold is not None and final < threshold:
+            raise serializers.ValidationError(
+                {"qty_final": "Final must be greater than or equal to threshold."}
+            )
+        return attrs
+
 
 class ManagerAttachmentSerializer(serializers.Serializer):
     parent_line_id = serializers.IntegerField()
@@ -172,6 +190,15 @@ class ManagerAttachmentSerializer(serializers.Serializer):
     original_price = serializers.DecimalField(
         max_digits=10, decimal_places=2, required=False, default=0
     )
+
+    def validate(self, attrs):
+        threshold = attrs.get("qty_threshold")
+        final = attrs.get("qty_final")
+        if final is not None and threshold is not None and final < threshold:
+            raise serializers.ValidationError(
+                {"qty_final": "Final must be greater than or equal to threshold."}
+            )
+        return attrs
 
 
 class ManagerDecideSerializer(serializers.Serializer):
