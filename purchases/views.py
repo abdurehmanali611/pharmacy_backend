@@ -13,6 +13,7 @@ from .serializers import PurchaseSerializer
 from medicines.models import Medicine
 from sales_approvals.serializers import PendingSaleSerializer
 from sales_approvals.services import (
+    apply_customer_discounts,
     cart_requires_approval,
     create_pending_sale,
     find_auto_rejected_items,
@@ -28,6 +29,7 @@ class BulkPurchaseItemSerializer(serializers.Serializer):
 
 class BulkPurchaseSerializer(serializers.Serializer):
     items = BulkPurchaseItemSerializer(many=True)
+    customer_name = serializers.CharField(required=False, allow_blank=True)
 
 class PurchaseViewSet(viewsets.ModelViewSet):
     queryset = Purchase.objects.all()
@@ -204,12 +206,23 @@ class PurchaseViewSet(viewsets.ModelViewSet):
                 }
             )
 
+        customer_name = apply_customer_discounts(
+            pharmacy_tin,
+            serializer.validated_data.get("customer_name", ""),
+            resolved_items,
+        )
+        # Keep the persisted-purchase loop below in step with discounted prices.
+        for item, resolved in zip(items, resolved_items):
+            item["price"] = resolved["price"]
+
         auto_reject_messages = find_auto_rejected_items(pharmacy_tin, resolved_items)
         if auto_reject_messages:
             raise ValidationError({"items": auto_reject_messages})
 
         if cart_requires_approval(pharmacy_tin, resolved_items):
-            pending = create_pending_sale(request.user, pharmacy_tin, resolved_items)
+            pending = create_pending_sale(
+                request.user, pharmacy_tin, resolved_items, customer_name
+            )
             return Response(
                 {
                     "detail": "Sale held for manager approval. Inventory was not changed.",

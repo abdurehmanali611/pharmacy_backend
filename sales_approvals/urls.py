@@ -3,6 +3,7 @@ from rest_framework.routers import DefaultRouter
 
 from .views import (
     ApprovalRequiredMedicineViewSet,
+    DiscountRuleViewSet,
     PendingSaleViewSet,
     QuantitySaleRuleViewSet,
 )
@@ -14,6 +15,7 @@ router.register(
     ApprovalRequiredMedicineViewSet,
     basename="approval-required-medicine",
 )
+router.register(r"discount-rules", DiscountRuleViewSet, basename="discount-rule")
 router.register(r"pending-sales", PendingSaleViewSet, basename="pending-sale")
 
 urlpatterns = [

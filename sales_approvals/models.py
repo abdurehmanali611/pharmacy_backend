@@ -57,6 +57,32 @@ class ApprovalRequiredMedicine(models.Model):
         return f"{self.medicine_id} needs approval ({self.pharmacy_tin})"
 
 
+class DiscountRule(models.Model):
+    """Manager-defined discount for a named customer on selected medicines."""
+
+    ROLE_HEALTH_PROFESSIONAL = "health_professional"
+    ROLE_OTHER = "other"
+    ROLE_CHOICES = [
+        (ROLE_HEALTH_PROFESSIONAL, "Health professional"),
+        (ROLE_OTHER, "Other"),
+    ]
+
+    pharmacy_tin = models.CharField(max_length=50, db_index=True)
+    customer_name = models.CharField(max_length=255)
+    role = models.CharField(max_length=32, choices=ROLE_CHOICES)
+    specific_role = models.CharField(max_length=255, blank=True, default="")
+    medicines = models.ManyToManyField(Medicine, related_name="discount_rules")
+    percentage = models.DecimalField(max_digits=5, decimal_places=2)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["customer_name", "-created_at"]
+
+    def __str__(self):
+        return f"{self.customer_name} {self.percentage}% ({self.pharmacy_tin})"
+
+
 class PendingSale(models.Model):
     STATUS_AWAITING_MANAGER = "awaiting_manager"
     STATUS_AWAITING_PHARMACIST = "awaiting_pharmacist"
@@ -94,6 +120,7 @@ class PendingSale(models.Model):
         related_name="pending_sales_reviewed",
     )
     manager_reject_reason = models.TextField(blank=True, default="")
+    customer_name = models.CharField(max_length=255, blank=True, default="")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -148,6 +175,9 @@ class PendingSaleLine(models.Model):
     qty_threshold = models.PositiveIntegerField(null=True, blank=True)
     qty_final = models.PositiveIntegerField(null=True, blank=True)
     pharmacist_quantity = models.PositiveIntegerField(null=True, blank=True)
+    discount_percent = models.DecimalField(
+        max_digits=5, decimal_places=2, null=True, blank=True
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

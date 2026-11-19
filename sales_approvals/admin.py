@@ -2,6 +2,7 @@ from django.contrib import admin
 
 from .models import (
     ApprovalRequiredMedicine,
+    DiscountRule,
     PendingSale,
     PendingSaleLine,
     QuantitySaleRule,
@@ -30,3 +31,9 @@ class PendingSaleAdmin(admin.ModelAdmin):
     list_display = ("id", "pharmacy_tin", "status", "created_by", "created_at")
     list_filter = ("status", "pharmacy_tin")
     inlines = [PendingSaleLineInline]
+
+
+@admin.register(DiscountRule)
+class DiscountRuleAdmin(admin.ModelAdmin):
+    list_display = ("id", "pharmacy_tin", "customer_name", "role", "percentage", "created_at")
+    list_filter = ("pharmacy_tin", "role")

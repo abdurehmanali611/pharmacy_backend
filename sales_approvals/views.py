@@ -10,6 +10,7 @@ from medicines.models import Medicine
 
 from .models import (
     ApprovalRequiredMedicine,
+    DiscountRule,
     PendingSale,
     PendingSaleLine,
     QuantitySaleRule,
@@ -17,6 +18,8 @@ from .models import (
 from .serializers import (
     ApprovalRequiredMedicineSerializer,
     BulkApprovalRequiredSerializer,
+    BulkDiscountRuleSerializer,
+    DiscountRuleSerializer,
     BulkQuantitySaleRuleSerializer,
     ManagerDecideSerializer,
     PendingSaleSerializer,
@@ -180,6 +183,73 @@ class ApprovalRequiredMedicineViewSet(viewsets.ModelViewSet):
         ).select_related("medicine")
         return Response(
             ApprovalRequiredMedicineSerializer(qs, many=True).data,
+            status=status.HTTP_201_CREATED,
+        )
+
+
+class DiscountRuleViewSet(viewsets.ModelViewSet):
+    serializer_class = DiscountRuleSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        tin = get_pharmacy_tin(self.request.user)
+        if not tin:
+            return DiscountRule.objects.none()
+        return DiscountRule.objects.filter(pharmacy_tin=tin).prefetch_related("medicines")
+
+    def _require_tin(self):
+        tin = get_pharmacy_tin(self.request.user)
+        if not tin:
+            raise ValidationError({"detail": "Missing pharmacy TIN for the current user."})
+        return tin
+
+    @staticmethod
+    def _check_medicines(tin, medicines):
+        if any(m.pharmacy_tin != tin for m in medicines):
+            raise ValidationError({"medicine_ids": ["Medicine not found in this pharmacy."]})
+
+    def perform_create(self, serializer):
+        tin = self._require_tin()
+        self._check_medicines(tin, serializer.validated_data["medicines"])
+        serializer.save(pharmacy_tin=tin)
+
+    def perform_update(self, serializer):
+        tin = self._require_tin()
+        if "medicines" in serializer.validated_data:
+            self._check_medicines(tin, serializer.validated_data["medicines"])
+        serializer.save(pharmacy_tin=tin)
+
+    @action(detail=False, methods=["post"], url_path="bulk_create")
+    def bulk_create(self, request):
+        tin = self._require_tin()
+        serializer = BulkDiscountRuleSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        items = serializer.validated_data["items"]
+
+        all_ids = {mid for item in items for mid in item["medicine_ids"]}
+        medicines = {
+            m.pk: m for m in Medicine.objects.filter(pharmacy_tin=tin, pk__in=all_ids)
+        }
+        if len(medicines) != len(all_ids):
+            raise ValidationError({"items": ["One or more medicines were not found."]})
+
+        created = []
+        with transaction.atomic():
+            for item in items:
+                rule = DiscountRule.objects.create(
+                    pharmacy_tin=tin,
+                    customer_name=item["customer_name"],
+                    role=item["role"],
+                    specific_role=item.get("specific_role", ""),
+                    percentage=item["percentage"],
+                )
+                rule.medicines.set(
+                    [medicines[mid] for mid in dict.fromkeys(item["medicine_ids"])]
+                )
+                created.append(rule)
+
+        return Response(
+            DiscountRuleSerializer(created, many=True).data,
             status=status.HTTP_201_CREATED,
         )
 

@@ -1,4 +1,4 @@
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 
 from django.db import transaction
 from django.db.models import Case, F, IntegerField, Value, When
@@ -9,7 +9,7 @@ from medicines.models import Medicine
 from purchases.models import Purchase
 from purchases.serializers import PurchaseSerializer
 
-from .models import ApprovalRequiredMedicine, PendingSale, PendingSaleLine, QuantitySaleRule
+from .models import ApprovalRequiredMedicine, DiscountRule, PendingSale, PendingSaleLine, QuantitySaleRule
 
 
 def get_pharmacy_tin(user):
@@ -102,12 +102,58 @@ def cart_requires_approval(pharmacy_tin, resolved_items):
     return False
 
 
-def create_pending_sale(user, pharmacy_tin, resolved_items):
+def apply_customer_discounts(pharmacy_tin, customer_name, resolved_items):
+    """
+    Apply the saved customer's discount rules to resolved cart items.
+
+    Matches rules by customer name (case-insensitive) and medicines by name, so every
+    batch of a discounted medicine qualifies. If several rules cover an item, the
+    highest percentage wins. Items without a matching rule keep their full price.
+    Mutates each item's "price" and sets "discount_percent" (None when not discounted).
+    Returns the canonical customer name, or "" when no customer was chosen.
+    """
+    customer_name = (customer_name or "").strip()
+    if not customer_name:
+        for item in resolved_items:
+            item["discount_percent"] = None
+        return ""
+
+    rules = list(
+        DiscountRule.objects.filter(
+            pharmacy_tin=pharmacy_tin, customer_name__iexact=customer_name
+        ).prefetch_related("medicines")
+    )
+    if not rules:
+        raise ValidationError({"customer_name": ["This customer has no saved discount."]})
+
+    best = {}
+    for rule in rules:
+        for medicine in rule.medicines.all():
+            key = medicine.name.strip().lower()
+            if key not in best or rule.percentage > best[key]:
+                best[key] = rule.percentage
+
+    for item in resolved_items:
+        percent = best.get(item["medicine"].name.strip().lower())
+        if percent is None:
+            item["discount_percent"] = None
+            continue
+        price = Decimal(item["price"])
+        discounted = (price * (Decimal("100") - percent) / Decimal("100")).quantize(
+            Decimal("0.01"), rounding=ROUND_HALF_UP
+        )
+        item["price"] = max(discounted, Decimal("0.01"))
+        item["discount_percent"] = percent
+    return rules[0].customer_name
+
+
+def create_pending_sale(user, pharmacy_tin, resolved_items, customer_name=""):
     with transaction.atomic():
         pending = PendingSale.objects.create(
             pharmacy_tin=pharmacy_tin,
             status=PendingSale.STATUS_AWAITING_MANAGER,
             created_by=user,
+            customer_name=customer_name,
         )
         for item in resolved_items:
             medicine = item["medicine"]
@@ -119,6 +165,7 @@ def create_pending_sale(user, pharmacy_tin, resolved_items):
                 medicine_name=item["medicine_name"],
                 original_quantity=quantity,
                 original_price=item["price"],
+                discount_percent=item.get("discount_percent"),
                 trigger=trigger,
                 is_attachment=False,
             )

@@ -1,9 +1,12 @@
+from decimal import Decimal
+
 from rest_framework import serializers
 
 from medicines.models import Medicine
 
 from .models import (
     ApprovalRequiredMedicine,
+    DiscountRule,
     PendingSale,
     PendingSaleLine,
     QuantitySaleRule,
@@ -118,6 +121,7 @@ class PendingSaleLineSerializer(serializers.ModelSerializer):
             "qty_threshold",
             "qty_final",
             "pharmacist_quantity",
+            "discount_percent",
             "effective_price",
             "attachments",
             "created_at",
@@ -150,6 +154,7 @@ class PendingSaleSerializer(serializers.ModelSerializer):
             "created_by_username",
             "reviewed_by",
             "manager_reject_reason",
+            "customer_name",
             "lines",
             "created_at",
             "updated_at",
@@ -216,3 +221,81 @@ class PharmacistConfirmLineSerializer(serializers.Serializer):
 class PharmacistConfirmSerializer(serializers.Serializer):
     action = serializers.ChoiceField(choices=["accept", "reject"])
     lines = PharmacistConfirmLineSerializer(many=True, required=False)
+
+
+ROLE_VALUES = [DiscountRule.ROLE_HEALTH_PROFESSIONAL, DiscountRule.ROLE_OTHER]
+
+
+def _validate_role_fields(attrs, instance=None):
+    role = attrs.get("role", getattr(instance, "role", None))
+    specific = attrs.get("specific_role", getattr(instance, "specific_role", "")) or ""
+    if role == DiscountRule.ROLE_OTHER and not specific.strip():
+        raise serializers.ValidationError({"specific_role": "Enter the specific role."})
+    if role == DiscountRule.ROLE_HEALTH_PROFESSIONAL:
+        attrs["specific_role"] = ""
+    return attrs
+
+
+class DiscountRuleSerializer(serializers.ModelSerializer):
+    medicine_ids = serializers.PrimaryKeyRelatedField(
+        source="medicines",
+        many=True,
+        queryset=Medicine.objects.all(),
+        allow_empty=False,
+    )
+    medicine_names = serializers.SerializerMethodField()
+    percentage = serializers.DecimalField(
+        max_digits=5, decimal_places=2, min_value=Decimal("0.01"), max_value=Decimal("100")
+    )
+    customer_name = serializers.CharField(max_length=255)
+
+    class Meta:
+        model = DiscountRule
+        fields = [
+            "id",
+            "pharmacy_tin",
+            "customer_name",
+            "role",
+            "specific_role",
+            "medicine_ids",
+            "medicine_names",
+            "percentage",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = ["id", "pharmacy_tin", "medicine_names", "created_at", "updated_at"]
+
+    def get_medicine_names(self, obj):
+        return [m.name for m in obj.medicines.all()]
+
+    def validate_customer_name(self, value):
+        value = value.strip()
+        if not value:
+            raise serializers.ValidationError("Customer name is required.")
+        return value
+
+    def validate(self, attrs):
+        return _validate_role_fields(attrs, self.instance)
+
+
+class BulkDiscountRuleItemSerializer(serializers.Serializer):
+    customer_name = serializers.CharField(max_length=255)
+    role = serializers.ChoiceField(choices=ROLE_VALUES)
+    specific_role = serializers.CharField(max_length=255, required=False, allow_blank=True)
+    medicine_ids = serializers.ListField(child=serializers.IntegerField(), allow_empty=False)
+    percentage = serializers.DecimalField(
+        max_digits=5, decimal_places=2, min_value=Decimal("0.01"), max_value=Decimal("100")
+    )
+
+    def validate_customer_name(self, value):
+        value = value.strip()
+        if not value:
+            raise serializers.ValidationError("Customer name is required.")
+        return value
+
+    def validate(self, attrs):
+        return _validate_role_fields(attrs)
+
+
+class BulkDiscountRuleSerializer(serializers.Serializer):
+    items = BulkDiscountRuleItemSerializer(many=True, allow_empty=False)
