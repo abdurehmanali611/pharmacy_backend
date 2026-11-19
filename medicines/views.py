@@ -99,6 +99,16 @@ class MedicineViewSet(viewsets.ModelViewSet):
             raise ValidationError({"detail": "Missing pharmacy TIN for the current user."})
         serializer.save(pharmacy_tin=pharmacy_tin)
 
+    @action(detail=False, methods=["get"], url_path="losses", pagination_class=None)
+    def losses(self, request):
+        """All damaged/wasted records for this pharmacy, newest first."""
+        profile = getattr(request.user, "profile", None)
+        pharmacy_tin = getattr(profile, "pharmacy_tin", "")
+        if not pharmacy_tin:
+            return Response([])
+        qs = StockLoss.objects.filter(pharmacy_tin=pharmacy_tin).select_related("medicine", "created_by")
+        return Response(StockLossSerializer(qs, many=True).data)
+
     @action(detail=False, methods=["post"], url_path="register_loss")
     def register_loss(self, request):
         """Record damaged/wasted stock for one or many medicines and deduct it from inventory."""
@@ -155,7 +165,7 @@ class MedicineViewSet(viewsets.ModelViewSet):
 
         return Response(
             {
-                "detail": f"Recorded {len(records)} {data['kind']} item(s).",
+                "detail": f"Recorded {len(records)} damaged/wasted item(s).",
                 "results": StockLossSerializer(records, many=True).data,
             },
             status=status.HTTP_201_CREATED,

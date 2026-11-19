@@ -12,6 +12,14 @@ from purchases.serializers import PurchaseSerializer
 from .models import ApprovalRequiredMedicine, DiscountRule, PendingSale, PendingSaleLine, QuantitySaleRule
 
 
+def agent_display_name(user):
+    """Full name when the profile has one, otherwise the username."""
+    if user is None:
+        return ""
+    profile = getattr(user, "profile", None)
+    return (getattr(profile, "full_name", "") or user.get_username() or "").strip()
+
+
 def get_pharmacy_tin(user):
     profile = getattr(user, "profile", None)
     return getattr(profile, "pharmacy_tin", "") or ""
@@ -113,6 +121,8 @@ def apply_customer_discounts(pharmacy_tin, customer_name, resolved_items):
     Returns the canonical customer name, or "" when no customer was chosen.
     """
     customer_name = (customer_name or "").strip()
+    for item in resolved_items:
+        item["list_price"] = Decimal(item["price"])
     if not customer_name:
         for item in resolved_items:
             item["discount_percent"] = None
@@ -166,6 +176,7 @@ def create_pending_sale(user, pharmacy_tin, resolved_items, customer_name=""):
                 original_quantity=quantity,
                 original_price=item["price"],
                 discount_percent=item.get("discount_percent"),
+                list_price=item.get("list_price"),
                 trigger=trigger,
                 is_attachment=False,
             )
@@ -287,6 +298,12 @@ def settle_pending_sale(pending: PendingSale):
                 price=price,
                 total_price=Decimal(qty) * Decimal(price),
                 cost_price=cost_price,
+                customer_name=pending.customer_name,
+                discount_percent=line.discount_percent,
+                list_price=line.list_price if line.list_price is not None else line.original_price,
+                rule_trigger="attachment" if line.is_attachment else line.trigger,
+                sold_by=pending.created_by,
+                sold_by_name=agent_display_name(pending.created_by),
             )
             created_purchases.append(purchase)
 

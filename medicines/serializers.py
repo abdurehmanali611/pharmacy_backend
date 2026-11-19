@@ -1,3 +1,5 @@
+from decimal import Decimal
+
 from rest_framework import serializers
 
 from suppliers.models import Supplier
@@ -16,6 +18,12 @@ class MedicineSerializer(serializers.ModelSerializer):
     supplier_name = serializers.SerializerMethodField()
     supplier_phone = serializers.SerializerMethodField()
     supplier_email = serializers.SerializerMethodField()
+    paid_amount = serializers.DecimalField(
+        max_digits=12, decimal_places=2, required=False, min_value=Decimal("0")
+    )
+    total_cost = serializers.SerializerMethodField()
+    credit_amount = serializers.SerializerMethodField()
+    payment_status = serializers.SerializerMethodField()
 
     class Meta:
         model = Medicine
@@ -29,6 +37,11 @@ class MedicineSerializer(serializers.ModelSerializer):
             "price",
             "cost",
             "quantity",
+            "received_quantity",
+            "paid_amount",
+            "total_cost",
+            "credit_amount",
+            "payment_status",
             "batch_number",
             "expiry_date",
             "description",
@@ -46,6 +59,10 @@ class MedicineSerializer(serializers.ModelSerializer):
             "supplier_name",
             "supplier_phone",
             "supplier_email",
+            "received_quantity",
+            "total_cost",
+            "credit_amount",
+            "payment_status",
             "created_at",
             "updated_at",
         ]
@@ -64,7 +81,49 @@ class MedicineSerializer(serializers.ModelSerializer):
 
         if supplier is None:
             raise serializers.ValidationError({"supplier_id": ["Please select a supplier."]})
+
+        # What was bought (received qty x cost) is the ceiling for what can be paid.
+        cost = attrs.get("cost", getattr(self.instance, "cost", Decimal("0")))
+        if self.instance is None:
+            received = attrs.get("quantity", 0)
+        else:
+            old_quantity = self.instance.quantity
+            new_quantity = attrs.get("quantity", old_quantity)
+            received = max(0, self.instance.received_quantity + (new_quantity - old_quantity))
+        total = Decimal(received) * Decimal(cost)
+        paid = attrs.get("paid_amount")
+        if paid is not None and paid > total:
+            raise serializers.ValidationError(
+                {"paid_amount": [f"Paid amount cannot exceed the total cost ({total})."]}
+            )
         return attrs
+
+    def create(self, validated_data):
+        quantity = validated_data.get("quantity", 0)
+        cost = validated_data.get("cost", Decimal("0"))
+        validated_data["received_quantity"] = quantity
+        if validated_data.get("paid_amount") is None:
+            validated_data["paid_amount"] = Decimal(quantity) * Decimal(cost)
+        return super().create(validated_data)
+
+    def update(self, instance, validated_data):
+        if "quantity" in validated_data:
+            delta = validated_data["quantity"] - instance.quantity
+            validated_data["received_quantity"] = max(0, instance.received_quantity + delta)
+        return super().update(instance, validated_data)
+
+    def _total(self, obj):
+        return (Decimal(obj.received_quantity) * Decimal(obj.cost)).quantize(Decimal("0.01"))
+
+    def get_total_cost(self, obj):
+        return self._total(obj)
+
+    def get_credit_amount(self, obj):
+        owed = self._total(obj) - Decimal(obj.paid_amount)
+        return owed if owed > Decimal("0.01") else Decimal("0.00")
+
+    def get_payment_status(self, obj):
+        return "credit" if self.get_credit_amount(obj) > 0 else "paid"
 
     def get_supplier_name(self, obj):
         return obj.supplier.supplier_name if obj.supplier else ""
@@ -82,12 +141,25 @@ class StockLossItemSerializer(serializers.Serializer):
 
 
 class RegisterStockLossSerializer(serializers.Serializer):
-    kind = serializers.ChoiceField(choices=[StockLoss.KIND_DAMAGED, StockLoss.KIND_WASTED])
+    kind = serializers.ChoiceField(choices=[StockLoss.KIND_DAMAGED_WASTED], default=StockLoss.KIND_DAMAGED_WASTED)
     note = serializers.CharField(required=False, allow_blank=True, max_length=500)
     items = StockLossItemSerializer(many=True, allow_empty=False)
 
 
 class StockLossSerializer(serializers.ModelSerializer):
+    value = serializers.SerializerMethodField()
+    expiry_date = serializers.SerializerMethodField()
+    recorded_by = serializers.SerializerMethodField()
+
+    def get_value(self, obj):
+        return (Decimal(obj.quantity) * Decimal(obj.cost_price)).quantize(Decimal("0.01"))
+
+    def get_expiry_date(self, obj):
+        return obj.medicine.expiry_date if obj.medicine else None
+
+    def get_recorded_by(self, obj):
+        return obj.created_by.username if obj.created_by else ""
+
     class Meta:
         model = StockLoss
         fields = [
@@ -98,6 +170,9 @@ class StockLossSerializer(serializers.ModelSerializer):
             "kind",
             "quantity",
             "cost_price",
+            "value",
+            "expiry_date",
+            "recorded_by",
             "note",
             "created_at",
         ]

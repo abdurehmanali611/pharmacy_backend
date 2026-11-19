@@ -13,6 +13,7 @@ from .serializers import PurchaseSerializer
 from medicines.models import Medicine
 from sales_approvals.serializers import PendingSaleSerializer
 from sales_approvals.services import (
+    agent_display_name,
     apply_customer_discounts,
     cart_requires_approval,
     create_pending_sale,
@@ -257,7 +258,7 @@ class PurchaseViewSet(viewsets.ModelViewSet):
                         }
                     )
 
-            for item, medicine_id in zip(items, medicine_ids_for_items):
+            for item, medicine_id, resolved in zip(items, medicine_ids_for_items, resolved_items):
                 medicine = locked_medicines[medicine_id]
                 medicine_name = item["medicine_name"]
                 quantity = item["quantity"]
@@ -274,6 +275,12 @@ class PurchaseViewSet(viewsets.ModelViewSet):
                     price=price,
                     total_price=quantity * price,
                     cost_price=medicine.cost,
+                    customer_name=customer_name,
+                    discount_percent=resolved.get("discount_percent"),
+                    list_price=resolved.get("list_price"),
+                    rule_trigger="none",
+                    sold_by=request.user,
+                    sold_by_name=agent_display_name(request.user),
                 )
                 created_purchases.append(purchase)
 

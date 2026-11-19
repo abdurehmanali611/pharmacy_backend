@@ -17,6 +17,8 @@ class Medicine(models.Model):
     price = models.DecimalField(max_digits=10, decimal_places=2)
     cost = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
     quantity = models.PositiveIntegerField(default=0)
+    received_quantity = models.PositiveIntegerField(default=0)
+    paid_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0.00)
     batch_number = models.CharField(max_length=255, blank=True, default="")
     expiry_date = models.DateField(null=True, blank=True)
     description = models.TextField()
@@ -34,11 +36,9 @@ class Medicine(models.Model):
 class StockLoss(models.Model):
     """Audit record for stock removed because it was damaged or wasted."""
 
-    KIND_DAMAGED = "damaged"
-    KIND_WASTED = "wasted"
+    KIND_DAMAGED_WASTED = "damaged_wasted"
     KIND_CHOICES = [
-        (KIND_DAMAGED, "Damaged"),
-        (KIND_WASTED, "Wasted"),
+        (KIND_DAMAGED_WASTED, "Damaged / wasted"),
     ]
 
     pharmacy_tin = models.CharField(max_length=50, db_index=True)
@@ -51,7 +51,7 @@ class StockLoss(models.Model):
     )
     medicine_name = models.CharField(max_length=255)
     batch_number = models.CharField(max_length=255, blank=True, default="")
-    kind = models.CharField(max_length=16, choices=KIND_CHOICES)
+    kind = models.CharField(max_length=16, choices=KIND_CHOICES, default=KIND_DAMAGED_WASTED)
     quantity = models.PositiveIntegerField()
     cost_price = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
     note = models.CharField(max_length=500, blank=True, default="")
