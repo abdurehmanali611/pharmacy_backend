@@ -1,9 +1,10 @@
 from django.db import transaction
+from django.db.models import Q
 from django.utils.dateparse import parse_date
 from rest_framework import permissions, viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import ValidationError
-from rest_framework.filters import OrderingFilter, SearchFilter
+from rest_framework.filters import OrderingFilter
 from rest_framework.parsers import MultiPartParser
 from rest_framework.response import Response
 from rest_framework import status
@@ -18,12 +19,52 @@ from .serializers import (
     StockLossSerializer,
 )
 
+# Category values are stored as slugs, but people search by the label they see in the UI.
+CATEGORY_LABELS = {
+    "pain_fever": "Pain & fever",
+    "antibiotics": "Antibiotics",
+    "malaria": "Malaria medicines",
+    "deworming": "Deworming (worms)",
+    "diarrhea_ors": "Diarrhea & ORS",
+    "stomach_acid_ulcer": "Stomach acid / ulcer",
+    "allergy": "Allergy & itching",
+    "cough_cold": "Cough & cold",
+    "asthma": "Asthma / breathing",
+    "hypertension": "Blood pressure",
+    "diabetes": "Diabetes",
+    "family_planning": "Family planning",
+    "pregnancy": "Pregnancy / mothers",
+    "skin": "Skin",
+    "fungal": "Fungal",
+    "eye_ear": "Eye / ear",
+    "vitamins": "Vitamins",
+    "other": "Other",
+}
+
+
+def apply_medicine_search(qs, raw):
+    """Every word must match the name, batch, supplier or category (by value or label)."""
+    for term in (raw or "").split():
+        t = term.lower()
+        categories = [
+            value
+            for value, label in CATEGORY_LABELS.items()
+            if t in label.lower() or t in value.replace("_", " ")
+        ]
+        qs = qs.filter(
+            Q(name__icontains=term)
+            | Q(batch_number__icontains=term)
+            | Q(supplier__supplier_name__icontains=term)
+            | Q(category__in=categories)
+        )
+    return qs
+
+
 class MedicineViewSet(viewsets.ModelViewSet):
     queryset = Medicine.objects.all()
     serializer_class = MedicineSerializer
     permission_classes = [permissions.IsAuthenticated]
-    filter_backends = [SearchFilter, OrderingFilter]
-    search_fields = ["name", "category", "supplier__supplier_name", "supplier__supplier_phone", "supplier__supplier_email", "description"]
+    filter_backends = [OrderingFilter]
     ordering_fields = ["created_at", "updated_at", "name", "category", "quantity", "price", "cost", "expiry_date"]
     ordering = ["-created_at"]
 
@@ -42,7 +83,7 @@ class MedicineViewSet(viewsets.ModelViewSet):
                 raise ValidationError({"created_date": ["Invalid date format. Use YYYY-MM-DD."]})
             qs = qs.filter(created_at__date=parsed)
 
-        return qs
+        return apply_medicine_search(qs, self.request.query_params.get("search"))
     
     def perform_create(self, serializer):
         profile = getattr(self.request.user, "profile", None)
