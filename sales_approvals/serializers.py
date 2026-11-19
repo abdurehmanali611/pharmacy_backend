@@ -231,8 +231,7 @@ def _validate_role_fields(attrs, instance=None):
     specific = attrs.get("specific_role", getattr(instance, "specific_role", "")) or ""
     if role == DiscountRule.ROLE_OTHER and not specific.strip():
         raise serializers.ValidationError({"specific_role": "Enter the specific role."})
-    if role == DiscountRule.ROLE_HEALTH_PROFESSIONAL:
-        attrs["specific_role"] = ""
+    attrs["specific_role"] = specific.strip()
     return attrs
 
 
