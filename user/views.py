@@ -68,7 +68,7 @@ class UserViewSet(viewsets.ModelViewSet):
             raise ValidationError({"username": ["Username cannot contain spaces."]})
         if saved and typed and typed.lower() != saved.lower():
             raise ValidationError(
-                {"username": [f"The sales username is already '{saved}'. Delete all sales agents to use a new one."]}
+                {"username": [f"The sales username is already '{saved}'. To change it, edit any sales agent."]}
             )
 
         if not saved:

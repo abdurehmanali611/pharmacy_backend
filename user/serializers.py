@@ -52,13 +52,23 @@ class UserSerializer(serializers.ModelSerializer):
         if not username:
             raise serializers.ValidationError("Username is required.")
 
-        # A username is created once and then stays fixed.
+        # Sales agents share one username; it can be changed here and the view applies the
+        # change to every agent of the pharmacy.
         if self.instance is not None:
             profile = getattr(self.instance, "profile", None)
-            shown = (profile.login_name if profile and profile.login_name else self.instance.username)
-            if username.lower() != shown.lower():
-                raise serializers.ValidationError("A username cannot be changed once it is created.")
-            return shown
+            if profile and profile.login_name:
+                if " " in username:
+                    raise serializers.ValidationError("Username cannot contain spaces.")
+                same_team = UserProfile.objects.filter(
+                    pharmacy_tin=profile.pharmacy_tin, role__iexact="pharmacist"
+                ).values_list("user_id", flat=True)
+                clash = (
+                    User.objects.filter(username__iexact=username).exclude(pk__in=same_team).exists()
+                    or UserProfile.objects.filter(login_name__iexact=username).exclude(user_id__in=same_team).exists()
+                )
+                if clash:
+                    raise serializers.ValidationError("This username is already taken.")
+                return username
 
         qs = User.objects.filter(username__iexact=username)
         if self.instance is not None:
@@ -186,13 +196,22 @@ class UserSerializer(serializers.ModelSerializer):
         password = validated_data.pop("password", None)
 
         existing_profile = getattr(instance, "profile", None)
-        if not (existing_profile and existing_profile.login_name):
+        new_login = None
+        if existing_profile and existing_profile.login_name:
+            # Shared agent username: stored on the profile; the view copies it to the whole team.
+            new_login = validated_data.get("username")
+        else:
             instance.username = validated_data.get("username", instance.username)
         if password:
             instance.set_password(password)
         instance.save()
 
         profile, _ = UserProfile.objects.get_or_create(user=instance)
+        if new_login and new_login != profile.login_name:
+            UserProfile.objects.filter(
+                pharmacy_tin=profile.pharmacy_tin, role__iexact="pharmacist"
+            ).exclude(login_name="").update(login_name=new_login)
+            profile.login_name = new_login
         for attr, value in profile_data.items():
             if value is not None:
                 setattr(profile, attr, value)
