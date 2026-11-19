@@ -2,7 +2,7 @@ from rest_framework import serializers
 
 from suppliers.models import Supplier
 
-from .models import Medicine
+from .models import Medicine, StockLoss
 
 class MedicineSerializer(serializers.ModelSerializer):
     supplier_id = serializers.PrimaryKeyRelatedField(
@@ -74,3 +74,30 @@ class MedicineSerializer(serializers.ModelSerializer):
 
     def get_supplier_email(self, obj):
         return obj.supplier.supplier_email if obj.supplier else ""
+
+
+class StockLossItemSerializer(serializers.Serializer):
+    medicine_id = serializers.IntegerField()
+    quantity = serializers.IntegerField(min_value=1)
+
+
+class RegisterStockLossSerializer(serializers.Serializer):
+    kind = serializers.ChoiceField(choices=[StockLoss.KIND_DAMAGED, StockLoss.KIND_WASTED])
+    note = serializers.CharField(required=False, allow_blank=True, max_length=500)
+    items = StockLossItemSerializer(many=True, allow_empty=False)
+
+
+class StockLossSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = StockLoss
+        fields = [
+            "id",
+            "medicine_id",
+            "medicine_name",
+            "batch_number",
+            "kind",
+            "quantity",
+            "cost_price",
+            "note",
+            "created_at",
+        ]

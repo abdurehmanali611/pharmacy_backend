@@ -1,3 +1,4 @@
+from django.db import transaction
 from django.utils.dateparse import parse_date
 from rest_framework import permissions, viewsets
 from rest_framework.decorators import action
@@ -10,8 +11,12 @@ from rest_framework import status
 from openpyxl import load_workbook
 from suppliers.models import Supplier
 
-from .models import Medicine
-from .serializers import MedicineSerializer
+from .models import Medicine, StockLoss
+from .serializers import (
+    MedicineSerializer,
+    RegisterStockLossSerializer,
+    StockLossSerializer,
+)
 
 class MedicineViewSet(viewsets.ModelViewSet):
     queryset = Medicine.objects.all()
@@ -52,6 +57,68 @@ class MedicineViewSet(viewsets.ModelViewSet):
         if not pharmacy_tin:
             raise ValidationError({"detail": "Missing pharmacy TIN for the current user."})
         serializer.save(pharmacy_tin=pharmacy_tin)
+
+    @action(detail=False, methods=["post"], url_path="register_loss")
+    def register_loss(self, request):
+        """Record damaged/wasted stock for one or many medicines and deduct it from inventory."""
+        profile = getattr(request.user, "profile", None)
+        pharmacy_tin = getattr(profile, "pharmacy_tin", "")
+        if not pharmacy_tin:
+            raise ValidationError({"detail": "Missing pharmacy TIN for the current user."})
+
+        serializer = RegisterStockLossSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+
+        # Merge duplicate medicine ids so stock is checked against the combined amount.
+        requested = {}
+        for item in data["items"]:
+            requested[item["medicine_id"]] = requested.get(item["medicine_id"], 0) + item["quantity"]
+
+        records = []
+        with transaction.atomic():
+            medicines = {
+                m.pk: m
+                for m in Medicine.objects.select_for_update().filter(
+                    pharmacy_tin=pharmacy_tin, pk__in=requested
+                )
+            }
+            if len(medicines) != len(requested):
+                raise ValidationError({"items": ["One or more medicines were not found."]})
+
+            for medicine_id, quantity in requested.items():
+                medicine = medicines[medicine_id]
+                if quantity > medicine.quantity:
+                    raise ValidationError(
+                        {
+                            "items": [
+                                f"{medicine.name}: only {medicine.quantity} in stock, cannot remove {quantity}."
+                            ]
+                        }
+                    )
+                medicine.quantity = medicine.quantity - quantity
+                medicine.save(update_fields=["quantity", "updated_at"])
+                records.append(
+                    StockLoss.objects.create(
+                        pharmacy_tin=pharmacy_tin,
+                        medicine=medicine,
+                        medicine_name=medicine.name,
+                        batch_number=medicine.batch_number,
+                        kind=data["kind"],
+                        quantity=quantity,
+                        cost_price=medicine.cost,
+                        note=data.get("note", ""),
+                        created_by=request.user,
+                    )
+                )
+
+        return Response(
+            {
+                "detail": f"Recorded {len(records)} {data['kind']} item(s).",
+                "results": StockLossSerializer(records, many=True).data,
+            },
+            status=status.HTTP_201_CREATED,
+        )
 
     @action(detail=False, methods=["post"], url_path="import_excel", parser_classes=[MultiPartParser])
     def import_excel(self, request):
