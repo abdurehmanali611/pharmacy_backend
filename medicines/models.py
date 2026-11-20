@@ -69,3 +69,37 @@ class StockLoss(models.Model):
 
     def __str__(self):
         return f"{self.kind} {self.medicine_name} x{self.quantity} ({self.pharmacy_tin})"
+
+
+class CreditPayment(models.Model):
+    """
+    One payment made against a credit stock line.
+
+    Medicine.paid_amount always equals what was paid up front plus every payment recorded here,
+    so editing a payment changes the totals everywhere, and deleting it returns them to what
+    they were before the payment existed.
+    """
+
+    pharmacy_tin = models.CharField(max_length=50, db_index=True)
+    medicine = models.ForeignKey(
+        Medicine,
+        on_delete=models.CASCADE,
+        related_name="credit_payments",
+    )
+    amount = models.DecimalField(max_digits=12, decimal_places=2)
+    fully_paid = models.BooleanField(default=False)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="credit_payments_recorded",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"{self.amount} on {self.medicine_id} ({self.pharmacy_tin})"

@@ -1,3 +1,5 @@
+from decimal import Decimal, InvalidOperation
+
 from django.db import transaction
 from django.db.models import Q
 from django.utils.dateparse import parse_date
@@ -12,8 +14,9 @@ from rest_framework import status
 from openpyxl import load_workbook
 from suppliers.models import Supplier
 
-from .models import Medicine, StockLoss
+from .models import CreditPayment, Medicine, StockLoss
 from .serializers import (
+    CreditPaymentSerializer,
     MedicineSerializer,
     RegisterStockLossSerializer,
     StockLossSerializer,
@@ -108,6 +111,137 @@ class MedicineViewSet(viewsets.ModelViewSet):
             return Response([])
         qs = StockLoss.objects.filter(pharmacy_tin=pharmacy_tin).select_related("medicine", "created_by")
         return Response(StockLossSerializer(qs, many=True).data)
+
+    @staticmethod
+    def _tin(request):
+        profile = getattr(request.user, "profile", None)
+        tin = getattr(profile, "pharmacy_tin", "")
+        if not tin:
+            raise ValidationError({"detail": "Missing pharmacy TIN for the current user."})
+        return tin
+
+    @staticmethod
+    def _total(medicine):
+        return (Decimal(medicine.received_quantity) * Decimal(medicine.cost)).quantize(Decimal("0.01"))
+
+    @staticmethod
+    def _amount(value):
+        try:
+            amount = Decimal(str(value)).quantize(Decimal("0.01"))
+        except (TypeError, ValueError, InvalidOperation):
+            raise ValidationError({"items": ["Enter a valid amount."]})
+        if amount <= 0:
+            raise ValidationError({"items": ["Each payment must be greater than zero."]})
+        return amount
+
+    @action(detail=False, methods=["get"], url_path="credit_payments", pagination_class=None)
+    def credit_payments(self, request):
+        """Every credit payment recorded for this pharmacy, newest first."""
+        pharmacy_tin = self._tin(request)
+        qs = CreditPayment.objects.filter(pharmacy_tin=pharmacy_tin).select_related(
+            "medicine", "medicine__supplier", "created_by"
+        )
+        return Response(CreditPaymentSerializer(qs, many=True).data)
+
+    @action(detail=False, methods=["patch", "delete"], url_path=r"credit_payments/(?P<payment_id>\d+)")
+    def credit_payment_detail(self, request, payment_id=None):
+        """
+        PATCH: change a payment's amount; the medicine's paid amount follows.
+        DELETE: remove a payment; the medicine goes back to what it was before that payment.
+        """
+        pharmacy_tin = self._tin(request)
+        with transaction.atomic():
+            payment = (
+                CreditPayment.objects.select_for_update()
+                .filter(pharmacy_tin=pharmacy_tin, pk=payment_id)
+                .select_related("medicine")
+                .first()
+            )
+            if payment is None:
+                raise ValidationError({"detail": "Payment not found."})
+            medicine = Medicine.objects.select_for_update().get(pk=payment.medicine_id)
+            paid = Decimal(medicine.paid_amount)
+
+            if request.method == "DELETE":
+                medicine.paid_amount = max(Decimal("0.00"), paid - Decimal(payment.amount))
+                medicine.save(update_fields=["paid_amount", "updated_at"])
+                payment.delete()
+                return Response(status=status.HTTP_204_NO_CONTENT)
+
+            amount = self._amount(request.data.get("amount"))
+            total = self._total(medicine)
+            new_paid = paid - Decimal(payment.amount) + amount
+            if new_paid > total + Decimal("0.005"):
+                room = total - (paid - Decimal(payment.amount))
+                raise ValidationError(
+                    {"amount": [f"{medicine.name}: the most this payment can be is {room}."]}
+                )
+            medicine.paid_amount = min(total, new_paid)
+            medicine.save(update_fields=["paid_amount", "updated_at"])
+            payment.amount = amount
+            payment.fully_paid = new_paid >= total - Decimal("0.005")
+            payment.save(update_fields=["amount", "fully_paid", "updated_at"])
+            payment = CreditPayment.objects.select_related("medicine", "medicine__supplier", "created_by").get(pk=payment.pk)
+            return Response(CreditPaymentSerializer(payment).data)
+
+    @action(detail=False, methods=["post"], url_path="pay_credit")
+    def pay_credit(self, request):
+        """
+        Record a full or partial payment against credit stock lines.
+        Body: {"items": [{"medicine_id": 1, "amount": "250.00"}, ...]}
+        Each line is stored as its own payment so it can be edited or deleted later.
+        """
+        pharmacy_tin = self._tin(request)
+        raw_items = request.data.get("items")
+        if not isinstance(raw_items, list) or not raw_items:
+            raise ValidationError({"items": ["Add at least one credit item to pay."]})
+
+        requested = {}
+        for raw in raw_items:
+            try:
+                medicine_id = int(raw.get("medicine_id"))
+            except (TypeError, ValueError, AttributeError):
+                raise ValidationError({"items": ["Each line needs a medicine and an amount."]})
+            requested[medicine_id] = requested.get(medicine_id, Decimal("0")) + self._amount(raw.get("amount"))
+
+        created = []
+        with transaction.atomic():
+            medicines = {
+                m.pk: m
+                for m in Medicine.objects.select_for_update().filter(pharmacy_tin=pharmacy_tin, pk__in=requested)
+            }
+            if len(medicines) != len(requested):
+                raise ValidationError({"items": ["One or more medicines were not found."]})
+
+            for medicine_id, amount in requested.items():
+                medicine = medicines[medicine_id]
+                total = self._total(medicine)
+                due = total - Decimal(medicine.paid_amount)
+                if due <= Decimal("0.01"):
+                    raise ValidationError({"items": [f"{medicine.name} is already fully paid."]})
+                if amount > due + Decimal("0.005"):
+                    raise ValidationError(
+                        {"items": [f"{medicine.name}: payment {amount} is more than the remaining credit {due}."]}
+                    )
+                medicine.paid_amount = min(total, Decimal(medicine.paid_amount) + amount)
+                medicine.save(update_fields=["paid_amount", "updated_at"])
+                created.append(
+                    CreditPayment.objects.create(
+                        pharmacy_tin=pharmacy_tin,
+                        medicine=medicine,
+                        amount=amount,
+                        fully_paid=Decimal(medicine.paid_amount) >= total - Decimal("0.005"),
+                        created_by=request.user,
+                    )
+                )
+
+        return Response(
+            {
+                "detail": f"Recorded payment for {len(created)} credit item(s).",
+                "results": CreditPaymentSerializer(created, many=True).data,
+            },
+            status=status.HTTP_201_CREATED,
+        )
 
     @action(detail=False, methods=["post"], url_path="register_loss")
     def register_loss(self, request):

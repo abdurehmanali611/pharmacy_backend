@@ -4,7 +4,7 @@ from rest_framework import serializers
 
 from suppliers.models import Supplier
 
-from .models import Medicine, StockLoss
+from .models import CreditPayment, Medicine, StockLoss
 
 class MedicineSerializer(serializers.ModelSerializer):
     supplier_id = serializers.PrimaryKeyRelatedField(
@@ -175,4 +175,45 @@ class StockLossSerializer(serializers.ModelSerializer):
             "recorded_by",
             "note",
             "created_at",
+        ]
+
+
+class CreditPaymentSerializer(serializers.ModelSerializer):
+    medicine_id = serializers.IntegerField(read_only=True)
+    medicine_name = serializers.CharField(source="medicine.name", read_only=True)
+    batch_number = serializers.CharField(source="medicine.batch_number", read_only=True)
+    supplier_name = serializers.SerializerMethodField()
+    total_cost = serializers.SerializerMethodField()
+    credit_amount = serializers.SerializerMethodField()
+    recorded_by = serializers.SerializerMethodField()
+
+    def get_supplier_name(self, obj):
+        supplier = obj.medicine.supplier
+        return supplier.supplier_name if supplier else ""
+
+    def get_total_cost(self, obj):
+        return (Decimal(obj.medicine.received_quantity) * Decimal(obj.medicine.cost)).quantize(Decimal("0.01"))
+
+    def get_credit_amount(self, obj):
+        owed = self.get_total_cost(obj) - Decimal(obj.medicine.paid_amount)
+        return owed if owed > Decimal("0.01") else Decimal("0.00")
+
+    def get_recorded_by(self, obj):
+        return obj.created_by.username if obj.created_by else ""
+
+    class Meta:
+        model = CreditPayment
+        fields = [
+            "id",
+            "medicine_id",
+            "medicine_name",
+            "batch_number",
+            "supplier_name",
+            "amount",
+            "fully_paid",
+            "total_cost",
+            "credit_amount",
+            "recorded_by",
+            "created_at",
+            "updated_at",
         ]
